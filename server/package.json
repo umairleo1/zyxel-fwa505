@@ -1,0 +1,16 @@
+{
+  "name": "@zyxel-insight/server",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --env-file-if-exists=../.env --watch src/index.js",
+    "dev:mock": "ROUTER_URL=http://127.0.0.1:8081 ROUTER_PASSWORD=mock POLL_INTERVAL_SEC=10 STATUS_INTERVAL_SEC=10 DB_PATH=server/data/mock.db node --watch src/index.js",
+    "mock": "node dev/mock-router.js",
+    "start": "node --env-file-if-exists=../.env src/index.js",
+    "test": "node --test 'test/**/*.test.js'"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "@zyxel-insight/shared": "*"
+  }
+}
