@@ -1,6 +1,7 @@
 {
   "name": "zyxel-insight",
   "private": true,
+  "license": "MIT",
   "workspaces": [
     "shared",
     "server",

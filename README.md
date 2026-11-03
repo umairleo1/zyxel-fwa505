@@ -20,6 +20,7 @@ Insight runs on your own computer, talks only to your router, and is **strictly 
 - [Development](#development)
 - [Troubleshooting](#troubleshooting)
 - [Compatibility](#compatibility)
+- [License](#license)
 
 ---
 
@@ -210,6 +211,10 @@ web/src/
 ## Compatibility
 
 Developed and verified against a **Zyxel FWA505**, firmware **V1.71(ACKO.0)C0**, with a Quectel RG500L modem. Other Zyxel models that use the same web interface (the `DAL` API) may partly work. Field names are matched defensively, and unsupported endpoints are reported rather than failing.
+
+## License
+
+Released under the [MIT License](LICENSE).
 
 ---
 
