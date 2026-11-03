@@ -1,0 +1,72 @@
+/* ───────────────────────── Responsive ───────────────────────── */
+@media (max-width: 1100px) {
+  .logs-panel.with-drawer .logs-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .drawer {
+    position: fixed;
+    z-index: 45;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    max-height: 70vh;
+    border-left: 0;
+    border-top: 1px solid var(--border);
+    border-radius: 14px 14px 0 0;
+    box-shadow: var(--shadow-pop);
+  }
+}
+@media (max-width: 720px) {
+  .main {
+    padding: 12px 16px 32px;
+  }
+  .topbar {
+    padding: 0 12px 0 8px;
+    gap: 8px;
+  }
+  .topbar-actions > .btn {
+    width: var(--control-h);
+    padding: 0;
+    justify-content: center;
+  }
+  .crumb,
+  .crumb-sep,
+  .topbar-divider,
+  .switch-text,
+  .btn-label {
+    display: none;
+  }
+  .kbd-hint {
+    display: none;
+  }
+  .health-pop {
+    position: fixed;
+    top: 60px;
+    left: 16px;
+    right: 16px;
+    width: auto;
+  }
+  .charts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .c-src,
+  .c-fac {
+    display: none;
+  }
+  .search {
+    max-width: none;
+    order: -1;
+    flex-basis: 100%;
+  }
+  .filterbar-export {
+    margin-left: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
