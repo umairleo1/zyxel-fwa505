@@ -1,0 +1,9 @@
+{
+  "name": "@zyxel-insight/shared",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./quality": "./quality.js",
+    "./severity": "./severity.js"
+  }
+}
