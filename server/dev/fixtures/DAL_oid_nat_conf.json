@@ -1,0 +1,1 @@
+{"result":"ZCFG_SUCCESS","ReplyMsg":"SubnetM","ReplyMsgMultiLang":"","Object":[{"DMZHost":"0.0.0.0","NAT_ALG":true,"SIP_ALG":true,"RTSP_ALG":false,"PPTP_ALG":false,"IPSEC_ALG":false,"H232_ALG":null,"FTP_ALG":null,"TFTP_ALG":null,"L2TP_ALG":null,"MaxSessionPerHost":2048,"GatewayAddress":"192.168.1.1","SubnetMask":"255.255.255.0"}]}

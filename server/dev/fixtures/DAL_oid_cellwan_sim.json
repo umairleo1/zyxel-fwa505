@@ -1,0 +1,1 @@
+{"result":"ZCFG_SUCCESS","ReplyMsg":"USIM_PI","ReplyMsgMultiLang":"","Object":[{"USIM_Status":"DEVST_SIM_RDY","USIM_IMSI":"234300000000001","USIM_ICCID":"8944000000000000001","USIM_Auto_Unlock":true,"USIM_PIN_Protection":false,"USIM_PIN_STATE":"","USIM_PIN_RemainingAttempts":3,"USIM_PUK_RemainingAttempts":10}]}

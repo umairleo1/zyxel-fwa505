@@ -1,0 +1,1 @@
+{"result":"ZCFG_SUCCESS","ReplyMsg":"ForceUp","ReplyMsgMultiLang":"","Object":[{"PeriodicCheckEnable":true,"PeriodicMode":0,"PeriodicStartDay":0,"StartTime":1,"ShiftTimeRange":14400,"ForceUpgrade":true}]}

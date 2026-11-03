@@ -1,0 +1,1 @@
+{"result":"ZCFG_SUCCESS","ReplyMsg":"Ripitf_","ReplyMsgMultiLang":"","Object":[{"idx":1,"Interface":"ETHWAN","Index":1,"Version":"RIPv2","RipOpMode":"Active","Enable":false,"DisableDefaultGw":false}]}

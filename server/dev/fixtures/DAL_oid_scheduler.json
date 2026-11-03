@@ -1,0 +1,1 @@
+{"result":"ZCFG_SUCCESS","ReplyMsg":"TimeSto","ReplyMsgMultiLang":"","Object":[{"Index":1,"TR181Path":"X_ZYXEL_Schedule.1","Name":"TV Night_1","Description":"ParentalControl","Days":"Mon,Tue,Wed,Thu,Fri,Sat,Sun","TimeStartHour":7,"TimeStartMin":0,"TimeStopHour":23,"TimeStopMin":59,"obj_MaxLength":64}]}
