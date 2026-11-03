@@ -1,0 +1,19 @@
+node_modules/
+.env
+server/data/
+web/dist/
+
+# Local state & secrets
+.env.*
+!.env.example
+*.db
+*.db-shm
+*.db-wal
+*.log
+npm-debug.log*
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+coverage/
