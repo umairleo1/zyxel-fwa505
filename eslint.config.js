@@ -17,9 +17,9 @@ export default [
       'object-shorthand': 'error',
     },
   },
-  // Node: server, shared, dev tools, tests
+  // Node: server, shared, dev tools, tests (web/test runs under node:test too)
   {
-    files: ['server/**/*.js', 'shared/**/*.js', '*.config.js', 'web/*.config.js'],
+    files: ['server/**/*.js', 'shared/**/*.js', '*.config.js', 'web/*.config.js', 'web/test/**/*.{js,jsx}'],
     languageOptions: { globals: globals.node },
   },
   // Browser: React app

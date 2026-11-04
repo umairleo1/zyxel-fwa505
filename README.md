@@ -75,7 +75,7 @@ All screenshots use the bundled mock router and synthetic demo data. No real net
 
 ## Quick start
 
-**Requirements:** Node.js 22.9 or newer (Insight uses the built-in `node:sqlite`), and a Zyxel FWA505 reachable on your network.
+**Requirements:** Node.js 22.13 or newer (Insight uses the built-in `node:sqlite`), and a Zyxel FWA505 reachable on your network.
 
 ```sh
 npm install
@@ -118,28 +118,40 @@ Notes:
   - **Lockout protection:** a rejected login halts collection instead of retrying, because the router locks the account after 3 failures.
   - **Pause:** releases the session, and nothing logs in while paused.
   - **Measured load:** about 19 requests per minute at idle, and under 50 per minute while someone browses every page. The admin page itself polls up to 60 per minute.
-- **Local only:**
-  - **Bound to localhost:** the server binds to `127.0.0.1` by default, and Insight has no login of its own. Keep it on localhost unless you add authentication in front of it.
-  - **Ignored by git:** the database (`server/data/`) and `.env` are excluded.
+- **Local by default, password on the LAN:**
+  - **Bound to localhost:** the server binds to `127.0.0.1` by default. To open it to other devices, set `HOST=0.0.0.0` (or a LAN IP) **and** `DASHBOARD_PASSWORD`; Insight refuses to start on a non-loopback address without a password.
+  - **Login:** with `DASHBOARD_PASSWORD` set, every page, API call and live stream needs HTTP Basic auth. The username is ignored (use `insight`). The browser asks once and reuses it. Use it on a trusted LAN only: Basic auth over plain HTTP can be sniffed, so put a TLS reverse proxy in front for anything wider, and never forward the port from the internet.
+  - **Browser protections:** requests must use a known host name (localhost, this machine's IPs and hostname, `ALLOWED_HOSTS`), which blocks DNS-rebinding pages. Buttons that change state (Pause/Resume) need an `X-Insight-Request` header and a same-origin `Origin`, so other sites cannot trigger them. Responses carry a strict Content-Security-Policy, `X-Frame-Options: DENY`, `nosniff` and `no-referrer`.
+  - **Router load caps:** at most 30 endpoints per `/api/router` request, a forced refresh (`fresh=1`) at most once per 10 s per endpoint (30 s for Insights), and at most 20 live (SSE) connections.
+  - **Syslog and SNMP listeners:** they bind to `0.0.0.0` so the router can reach them, but only accept packets from the router (the host in `ROUTER_URL`) and loopback, unless `INGEST_ALLOWED_SOURCES` says otherwise. Stored rows are capped at 600 syslog lines and 60 traps per minute; denied and dropped packets are counted in the status and warnings are logged at most once a minute.
+  - **Ignored by git:** the database (`server/data/`, including `backups/`) and `.env` are excluded.
+- **Health and backups:** `GET /api/health` returns 200 while collecting (or paused) and 503 when login is halted or no router read succeeded for 3 × max(`STATUS_INTERVAL_SEC`, 60 s). It needs the password like everything else, except from the same machine (loopback), so systemd or a local monitor can probe it. A copy of the database is written every `BACKUP_EVERY_DAYS` (default 7) to `<DB dir>/backups/insight-YYYY-MM-DD.db` (newest `BACKUP_KEEP` kept); weekly by default because each backup copies the whole database, which matters on an SD card. On an unexpected error Insight logs out of the router and exits with code 1, so a supervisor such as systemd can restart it.
+
+See [SECURITY.md](SECURITY.md) for the threat model and how to report a vulnerability.
 
 ## Configuration
 
 All settings are environment variables, read from `.env` in the project root. See `.env.example`.
 
-| Variable                            | Default                  | Purpose                                                              |
-| ----------------------------------- | ------------------------ | -------------------------------------------------------------------- |
-| `ROUTER_URL`                        | `https://192.168.1.1`    | Router address (self-signed certificate accepted for this host only) |
-| `ROUTER_USER` / `ROUTER_PASSWORD`   | `admin` / none           | Router admin login                                                   |
-| `POLL_INTERVAL_SEC`                 | `120`                    | How often the router log (last 100 lines) is read                    |
-| `STATUS_INTERVAL_SEC`               | `5`                      | Signal, carriers and uptime                                          |
-| `SYSLOG_PORT` / `SYSLOG_HOST`       | `5514` / `0.0.0.0`       | Remote syslog listener                                               |
-| `SNMP_TRAP_PORT` / `SNMP_TRAP_HOST` | `1162` / `0.0.0.0`       | SNMP trap listener                                                   |
-| `SNMP_COMMUNITY`                    | empty (any)              | Only accept traps with this community                                |
-| `HOST` / `PORT`                     | `127.0.0.1` / `4400`     | Web UI and API                                                       |
-| `DB_PATH`                           | `server/data/insight.db` | SQLite database (relative to the project root)                       |
-| `RETAIN_LOGS_DAYS`                  | `180`                    | Log retention                                                        |
-| `RETAIN_SIGNAL_DAYS`                | `90`                     | 5-second signal sample retention                                     |
-| `RETAIN_WIFI_DAYS`                  | `30`                     | Per-device Wi-Fi sample retention                                    |
+| Variable                            | Default                  | Purpose                                                                                                |
+| ----------------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------ |
+| `ROUTER_URL`                        | `https://192.168.1.1`    | Router address (self-signed certificate accepted for this host only)                                   |
+| `ROUTER_USER` / `ROUTER_PASSWORD`   | `admin` / none           | Router admin login                                                                                     |
+| `POLL_INTERVAL_SEC`                 | `120`                    | How often the router log (last 100 lines) is read                                                      |
+| `STATUS_INTERVAL_SEC`               | `5`                      | Signal, carriers and uptime                                                                            |
+| `SYSLOG_PORT` / `SYSLOG_HOST`       | `5514` / `0.0.0.0`       | Remote syslog listener                                                                                 |
+| `SNMP_TRAP_PORT` / `SNMP_TRAP_HOST` | `1162` / `0.0.0.0`       | SNMP trap listener                                                                                     |
+| `SNMP_COMMUNITY`                    | empty (any)              | Only accept traps with this community                                                                  |
+| `INGEST_ALLOWED_SOURCES`            | the router's address     | Comma-separated IPs/hostnames allowed to send syslog and traps; `*` = anyone (loopback always allowed) |
+| `HOST` / `PORT`                     | `127.0.0.1` / `4400`     | Web UI and API                                                                                         |
+| `DASHBOARD_PASSWORD`                | empty (no login)         | HTTP Basic password, any username. Required when `HOST` is not loopback                                |
+| `ALLOWED_HOSTS`                     | empty                    | Extra host names the UI may be opened by (DNS name, reverse proxy)                                     |
+| `DB_PATH`                           | `server/data/insight.db` | SQLite database (relative to the project root)                                                         |
+| `RETAIN_LOGS_DAYS`                  | `180`                    | Log retention                                                                                          |
+| `RETAIN_SIGNAL_DAYS`                | `90`                     | 5-second signal sample retention                                                                       |
+| `RETAIN_WIFI_DAYS`                  | `30`                     | Per-device Wi-Fi sample retention                                                                      |
+| `BACKUP_KEEP`                       | `4`                      | Database backups kept in `<DB dir>/backups/` (`0` = off)                                               |
+| `BACKUP_EVERY_DAYS`                 | `7`                      | Days between database backups                                                                          |
 
 ## Accuracy and limitations
 
@@ -202,6 +214,7 @@ web/src/
 
 | Symptom                                  | Cause and fix                                                                                                                                                              |
 | ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| "Unknown host name" (421)                | You opened Insight by a name it does not know. Add it to `ALLOWED_HOSTS`.                                                                                                  |
 | "Port 4400 is already in use"            | Another program uses the port. Set `PORT` in `.env`.                                                                                                                       |
 | Collector shows **Halted**               | The router rejected the login. Fix `ROUTER_USER`/`ROUTER_PASSWORD`, then press **Retry login**. Insight does not retry on its own, to avoid the router's 3-strike lockout. |
 | Admin page says "Duplicated login"       | Press **Pause** in Insight before using the admin page, and **Resume** afterwards.                                                                                         |

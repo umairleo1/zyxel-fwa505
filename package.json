@@ -12,7 +12,7 @@
     "dev:mock": "concurrently -n mock,server,web -c gray,blue,green \"npm run mock -w server\" \"npm run dev:mock -w server\" \"npm run dev -w web\"",
     "build": "npm run build -w web",
     "start": "npm start -w server",
-    "test": "node --test 'shared/test/**/*.test.js' 'server/test/**/*.test.js'",
+    "test": "node --test 'shared/test/**/*.test.js' 'server/test/**/*.test.js' 'web/test/**/*.test.js'",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
@@ -29,6 +29,6 @@
   },
   "type": "module",
   "engines": {
-    "node": ">=22.9"
+    "node": ">=22.13"
   }
 }
