@@ -6,7 +6,7 @@ const RECENT_STATIONS_MS = 5 * 60e3;
 // Pad the traffic query by one sample so the first bucket has a delta.
 const TRAFFIC_PAD_MS = 120e3;
 
-/** Time series collected by Insight: signal, traffic, CPU/memory, devices. */
+/** Time series collected by Insight: signal, traffic, CPU/memory, bands seen, devices. */
 export function telemetryRoutes({ db }) {
   const r = Router();
 
@@ -25,6 +25,8 @@ export function telemetryRoutes({ db }) {
     const { from, to } = timeRange(req.query);
     res.json({ from, to, samples: db.system(from, to), reboots: db.reboots(from, to), outages: db.outages(from, to) });
   });
+
+  r.get('/bands', (_req, res) => res.json({ bands: db.bandsSeen() }));
 
   r.get('/devices', (_req, res) => {
     const stations = new Map(db.latestStations(Date.now() - RECENT_STATIONS_MS).map((s) => [s.mac, s]));

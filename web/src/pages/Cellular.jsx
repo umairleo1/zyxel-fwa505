@@ -8,6 +8,7 @@ import { KV, PageHeader, Panel, SourceNote, Stat } from '../components/ui/index.
 import Segmented from '../components/ui/Segmented.jsx';
 import Carriers from '../features/cellular/Carriers.jsx';
 import SignalChart from '../features/cellular/SignalChart.jsx';
+import BandsSeen from '../features/cellular/BandsSeen.jsx';
 import { QualityBadge } from '../components/ui/Quality.jsx';
 
 const SIM = { DEVST_SIM_RDY: 'Ready', DEVST_SIM_NOT_INSERTED: 'Not inserted', DEVST_SIM_PIN: 'PIN required' };
@@ -21,12 +22,14 @@ export default function Cellular() {
   const range = useMemo(() => ({ from: Date.now() - span, to: Date.now() }), [span, ticks.metrics]); // eslint-disable-line react-hooks/exhaustive-deps
   const metrics = useAsync(() => api.metrics(range), [range]);
   const r = useRouterData(['cellwan_status', 'cellwan_sim', 'cellwan_band'], [Math.floor(ticks.metrics / 12)]);
+  const seen = useAsync(() => api.bands(), [Math.floor(ticks.metrics / 12)]);
   const events = useAsync(() => api.logs({ source: 'insight', facility: ['cell', 'carriers'] }, undefined, 15), [ticks.data]);
   const cw = r.get('cellwan_status')?.[0];
   const sim = r.get('cellwan_sim')?.[0];
   const band = r.get('cellwan_band')?.[0];
   const active = new Set((ca?.carriers ?? []).map((c) => c.band?.toUpperCase()));
   const supported = (band?.INTF_Supported_Bands ?? '').split(',').filter(Boolean);
+  const seenBands = new Set((seen.data?.bands ?? []).map((b) => b.band.toUpperCase()));
   const pcc = ca?.carriers.find((c) => c.role === 'primary');
 
   return (
@@ -135,17 +138,19 @@ export default function Cellular() {
               {supported.map((b) => (
                 <span
                   key={b}
-                  className={`band-chip ${active.has(b.toUpperCase()) ? 'is-active' : ''}`}
-                  title={active.has(b.toUpperCase()) ? 'In use now' : 'Supported'}
+                  className={`band-chip ${active.has(b.toUpperCase()) ? 'is-active' : seenBands.has(b.toUpperCase()) ? 'is-seen' : ''}`}
+                  title={active.has(b.toUpperCase()) ? 'In use now' : seenBands.has(b.toUpperCase()) ? 'Used here before' : 'Supported'}
                 >
                   {b}
                 </span>
               ))}
             </div>
-            <p className="tile-sub">Highlighted bands are in use right now.</p>
+            <p className="tile-sub">Filled: in use now. Outlined: used here before. Plain: supported, not seen yet.</p>
           </Panel>
         </div>
       </div>
+
+      <BandsSeen bands={seen.data?.bands} active={active} loading={seen.loading} />
 
       <Panel title="Cell & carrier changes" subtitle="Handovers and band-combination changes detected by Insight">
         {events.data?.items?.length ? (
