@@ -27,7 +27,10 @@ export function startSamplers({ routerData, db, log = console, emit = () => {}, 
 
   async function sampleTraffic() {
     try {
-      const { data } = await routerData.raw('Traffic_Status', 0);
+      const { data, stale } = await routerData.raw('Traffic_Status', 0);
+      // Cached counters (router unavailable, collector paused) aren't a new sample:
+      // stamping them "now" would pile the whole outage's traffic into one bucket.
+      if (stale) return;
       db.insertTraffic({ ts: Date.now(), ...trafficTotals(data) });
       emit('traffic');
     } catch (e) {
@@ -39,11 +42,25 @@ export function startSamplers({ routerData, db, log = console, emit = () => {}, 
     let hosts;
     let stations;
     try {
-      [hosts, stations] = await Promise.all([routerData.raw('lanhosts', 0), routerData.raw('stations', 0)]);
+      // One after the other: they share the router's request queue anyway.
+      hosts = await routerData.raw('lanhosts', 0);
+      stations = await routerData.raw('stations', 0);
+      if (hosts.stale || stations.stale) return; // see sampleTraffic
     } catch (e) {
       if (e.status !== 409) log.warn(`[samplers] devices: ${e.message}`);
       return;
     }
+    // Runs from a timer: an exception here would be an unhandled rejection.
+    try {
+      db.batch(() => recordDevices(hosts, stations)); // one commit per sample, not one per device
+    } catch (e) {
+      log.error(`[samplers] devices: ${e.message}`);
+    }
+  }
+
+  // Every device event names the MAC, so a device's history survives renames
+  // and "Mac" doesn't match "MacBook".
+  function recordDevices(hosts, stations) {
     const now = Date.now();
     const firstRun = db.getMeta('devicesSeeded') !== '1';
     const wifi = new Map(stations.data.map((s) => [s.mac, s]));
@@ -65,7 +82,7 @@ export function startSamplers({ routerData, db, log = console, emit = () => {}, 
       const label = `${name ?? mac} (${[conn, h.IPAddress].filter(Boolean).join(', ')})`;
       if (!prev && !firstRun)
         events.push({ level: 'warning', message: `New device joined the network for the first time: ${label} · ${mac}` });
-      else if (prev && !prev.online) events.push({ level: 'info', message: `${label} connected` });
+      else if (prev && !prev.online) events.push({ level: 'info', message: `${label} connected · ${mac}` });
     }
     // Wi-Fi stations the host table hasn't caught up with yet.
     for (const st of stations.data) {
@@ -86,7 +103,7 @@ export function startSamplers({ routerData, db, log = console, emit = () => {}, 
         missing.delete(d.mac);
         events.push({
           level: 'info',
-          message: `${d.name ?? d.mac} disconnected (last seen ${new Date(d.last_seen).toLocaleTimeString()})`,
+          message: `${d.name ?? d.mac} disconnected (last seen ${new Date(d.last_seen).toLocaleTimeString()}) · ${d.mac}`,
         });
       }
     }
@@ -124,7 +141,10 @@ export function startSamplers({ routerData, db, log = console, emit = () => {}, 
 // firmware reset, bad sample), not real traffic.
 const MAX_PLAUSIBLE_BPS = 3e9;
 
-export function summarizeTraffic(rows, { bucketMs, from, to, tzOffsetMin = new Date().getTimezoneOffset() }) {
+/** Local midnight of ts. Per timestamp, so days stay right across a clock change (BST/GMT). */
+const localDayStart = (ts) => new Date(ts).setHours(0, 0, 0, 0);
+
+export function summarizeTraffic(rows, { bucketMs, from, to, dayStart = localDayStart }) {
   const buckets = new Map();
   const days = new Map();
   let peak = { rx: 0, tx: 0, rxAt: null, txAt: null };
@@ -138,8 +158,8 @@ export function summarizeTraffic(rows, { bucketMs, from, to, tzOffsetMin = new D
     const rx = d('wan_rx');
     const tx = d('wan_tx');
     if (((rx + tx) * 8) / dt > MAX_PLAUSIBLE_BPS) continue; // counter discontinuity
-    const dayKey = Math.floor((b.ts - tzOffsetMin * 60e3) / 86400e3);
-    const day = days.get(dayKey) ?? { day: dayKey * 86400e3 + tzOffsetMin * 60e3, rx: 0, tx: 0 };
+    const dayKey = dayStart(b.ts);
+    const day = days.get(dayKey) ?? { day: dayKey, rx: 0, tx: 0 };
     days.set(dayKey, day);
     if (dt > 15 * 60) {
       // Sampling gap (Insight stopped / Mac asleep): we don't know *when* those bytes

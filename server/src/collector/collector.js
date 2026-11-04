@@ -3,7 +3,12 @@ import { RouterError } from '../router/client.js';
 import { newLines, parseRouterLine } from '../logs/parse.js';
 import { findKey, scalars, toNumber } from '../lib/util.js';
 import { interpretRadio } from './radio.js';
-import { SAME_BOOT_MS, detectReboot, rebootMessage } from './reboots.js';
+import { performance } from 'node:perf_hooks';
+import { SAME_BOOT_MS, detectReboot, rebootMessage, uptimeContinues } from './reboots.js';
+
+// Poll timing uses a monotonic clock, so a wall-clock step back (NTP sync on a Pi
+// without an RTC) can't pause polling. Epoch-scaled so 0 still means "long ago".
+const clock = () => performance.timeOrigin + performance.now();
 
 const FULL_STATUS_MS = 60_000; // device info + uptime; signal comes from cellwan_status every poll
 
@@ -34,6 +39,8 @@ export class Collector extends EventEmitter {
     this.inFlight = false;
     this.pollAgain = false;
     this.lastPollNow = 0;
+    this.pollNowGen = 0; // bumped by pollNow(), so a request made mid-poll isn't lost
+    this.lastUptime = null; // { uptimeSec, mono } from the previous full status, this process
     this.fullStatus = null; // { data, at }
     this.outageStart = null;
     this.lastCell = null;
@@ -58,6 +65,16 @@ export class Collector extends EventEmitter {
   async stop() {
     clearTimeout(this.timer);
     this.timer = null;
+    // An outage still open at shutdown would be forgotten; record what we know.
+    if (this.state.phase === 'backoff' && this.outageStart && this.failures >= 2) {
+      this.#safely(() =>
+        this.db.insertOutage({
+          start_ts: this.outageStart,
+          end_ts: Date.now(),
+          reason: `${this.state.lastError?.kind ?? 'unknown'} (Insight stopped)`,
+        }),
+      );
+    }
     await this.client.logout().catch(() => {});
   }
 
@@ -65,7 +82,9 @@ export class Collector extends EventEmitter {
     clearTimeout(this.timer);
     this.state.phase = 'paused';
     this.state.nextAttemptAt = null;
-    // Free the session so the router's own web UI can log in.
+    // Free the session so the router's own web UI can log in. Suspend first, so a
+    // poll or sampler request already queued can't log straight back in.
+    this.client.suspend();
     await this.client.logout().catch(() => {});
     this.#event('notice', 'Collector paused; router session released');
     this.emit('change');
@@ -73,9 +92,12 @@ export class Collector extends EventEmitter {
 
   resume() {
     if (this.state.phase !== 'paused' && this.state.phase !== 'halted') return;
+    // Retry after a certificate change is the user saying "I reset the router, trust it".
+    this.client.resume({ trustNewCertificate: this.state.lastError?.kind === 'tls' });
     this.failures = 0;
     this.state.phase = 'starting';
     this.#event('notice', 'Collector resumed');
+    // A poll paused mid-request is still unwinding; #tick reschedules itself if so.
     this.#schedule(0);
     this.emit('change');
   }
@@ -85,8 +107,9 @@ export class Collector extends EventEmitter {
    * for the next interval. Throttled so a burst of traps causes one poll.
    */
   pollNow() {
-    if (this.state.phase !== 'ok' || Date.now() - this.lastPollNow < 5000) return;
-    this.lastPollNow = Date.now();
+    if (this.state.phase !== 'ok' || clock() - this.lastPollNow < 5000) return;
+    this.lastPollNow = clock();
+    this.pollNowGen++;
     this.lastLogPoll = 0;
     this.lastStatusPoll = 0;
     if (this.inFlight) this.pollAgain = true;
@@ -106,19 +129,31 @@ export class Collector extends EventEmitter {
   }
 
   async #tick() {
-    const now = Date.now();
     const stopped = () => this.state.phase === 'paused' || this.state.phase === 'halted';
     if (stopped()) return;
+    // Never two polls at once (e.g. resume() while a paused poll is still unwinding).
+    if (this.inFlight) {
+      this.#schedule(1000);
+      return;
+    }
     this.inFlight = true;
+    const gen = this.pollNowGen;
+    // A pollNow() during this poll leaves its 0 in place, so the next tick polls again.
+    const t = clock();
+    const done = () => (this.pollNowGen === gen ? t : 0);
     try {
-      if (now - this.lastLogPoll >= this.pollMs - 1000) {
-        for (const l of LOGS) await this.#pollLog(l);
-        this.lastLogPoll = now;
+      if (t - this.lastLogPoll >= this.pollMs - 1000) {
+        for (const l of LOGS) {
+          if (stopped()) return;
+          await this.#pollLog(l);
+        }
+        this.lastLogPoll = done();
         this.state.lastLogsAt = Date.now();
       }
-      if (now - this.lastStatusPoll >= this.statusMs - 1000) {
+      if (stopped()) return;
+      if (t - this.lastStatusPoll >= this.statusMs - 1000) {
         await this.#pollStatus();
-        this.lastStatusPoll = now;
+        this.lastStatusPoll = done();
         this.state.lastStatusAt = Date.now();
       }
       if (stopped()) return; // paused while a request was in flight
@@ -126,7 +161,7 @@ export class Collector extends EventEmitter {
         const end = Date.now();
         // One failed request that succeeds on the next try is a glitch, not an outage.
         if (this.failures >= 2)
-          this.db.insertOutage({ start_ts: this.outageStart, end_ts: end, reason: this.state.lastError?.kind ?? null });
+          this.#safely(() => this.db.insertOutage({ start_ts: this.outageStart, end_ts: end, reason: this.state.lastError?.kind ?? null }));
         this.#event('notice', `Router connection restored after ${Math.round((end - this.outageStart) / 1000)}s`);
       } else if (this.state.phase !== 'ok' && this.state.phase !== 'starting') {
         this.#event('notice', 'Router connection restored');
@@ -147,6 +182,7 @@ export class Collector extends EventEmitter {
 
   #handleError(err) {
     const kind = err instanceof RouterError ? err.kind : 'internal';
+    if (kind === 'paused') return; // a request cut short by Pause, not a router problem
     this.failures++;
     this.state.lastError = { kind, message: err.message, at: Date.now() };
     this.log.warn(`[collector] ${kind}: ${err.message}`);
@@ -156,8 +192,14 @@ export class Collector extends EventEmitter {
       this.state.nextAttemptAt = null;
       this.#event(
         'err',
-        `Login rejected; collector halted to avoid locking the account. Check ROUTER_USER/ROUTER_PASSWORD, then press Retry. (${err.message})`,
+        `Login rejected; collector halted to avoid locking the account. Check ROUTER_USER/ROUTER_PASSWORD (a changed password needs an Insight restart), then press Retry. (${err.message})`,
       );
+      return;
+    }
+    if (kind === 'tls') {
+      this.state.phase = 'halted';
+      this.state.nextAttemptAt = null;
+      this.#event('err', `Collector halted before sending the password: ${err.message}`);
       return;
     }
     let delay;
@@ -201,8 +243,8 @@ export class Collector extends EventEmitter {
     const now = Date.now();
     // The big DAL status object (device info, uptime) changes slowly: refresh it once a minute.
     let fresh = false;
-    if (!this.fullStatus || now - this.fullStatus.at >= FULL_STATUS_MS || this.lastStatusPoll === 0) {
-      this.fullStatus = { data: await this.client.getStatus(), at: now };
+    if (!this.fullStatus || clock() - this.fullStatus.monoAt >= FULL_STATUS_MS || this.lastStatusPoll === 0) {
+      this.fullStatus = { data: await this.client.getStatus(), at: now, monoAt: clock() };
       fresh = true;
     }
     // The small cellular object carries live signal and carrier aggregation.
@@ -223,10 +265,11 @@ export class Collector extends EventEmitter {
     const uptimeSec = baseUptime == null ? null : baseUptime + Math.floor((now - this.fullStatus.at) / 1000);
     const prev = this.state.router;
     if (fresh && baseUptime != null) {
-      this.#checkReboot(this.fullStatus.at - baseUptime * 1000);
+      // Database trouble below is logged, not treated as the router being unavailable.
+      this.#safely(() => this.#checkReboot(this.fullStatus.at - baseUptime * 1000, baseUptime));
       const mem = findKey(data, 'MemoryStatus');
       const cpu = toNumber(findKey(data, 'ProcessStatus')?.CPUUsage);
-      this.db.insertSystem({ ts: now, cpu, mem_total: mem?.Total ?? null, mem_free: mem?.Free ?? null });
+      this.#safely(() => this.db.insertSystem({ ts: now, cpu, mem_total: mem?.Total ?? null, mem_free: mem?.Free ?? null }));
       this.state.system = { cpu, memTotalKb: mem?.Total ?? null, memFreeKb: mem?.Free ?? null };
     }
 
@@ -251,22 +294,26 @@ export class Collector extends EventEmitter {
       // Raw scalars + SCC list, kept so new firmware fields can be inspected via /api/status.
       cellwan: cellwan ? { ...scalars(cellwan), SCC_Info: cellwan.SCC_Info ?? null } : null,
     };
+    // Also with no carriers: a gap in coverage must end the bands' sessions.
+    this.#safely(() => this.db.recordCarriers(now, ca.carriers));
     if (signal) {
       const { lte, nr: n } = signal;
-      this.db.insertMetric({
-        ts: now,
-        uptime: uptimeSec,
-        lte_rsrp: lte.rsrp,
-        lte_rsrq: lte.rsrq,
-        lte_sinr: lte.sinr,
-        lte_rssi: lte.rssi,
-        nr_rsrp: n?.rsrp,
-        nr_rsrq: n?.rsrq,
-        nr_sinr: n?.sinr,
-        nr_rssi: n?.rssi,
-        combo: ca.combo,
-        cell: servingCell?.key ?? null,
-      });
+      this.#safely(() =>
+        this.db.insertMetric({
+          ts: now,
+          uptime: uptimeSec,
+          lte_rsrp: lte.rsrp,
+          lte_rsrq: lte.rsrq,
+          lte_sinr: lte.sinr,
+          lte_rssi: lte.rssi,
+          nr_rsrp: n?.rsrp,
+          nr_rsrq: n?.rsrq,
+          nr_sinr: n?.sinr,
+          nr_rssi: n?.rssi,
+          combo: ca.combo,
+          cell: servingCell?.key ?? null,
+        }),
+      );
     }
   }
 
@@ -275,15 +322,26 @@ export class Collector extends EventEmitter {
    * reboots that happen while Insight is stopped or the Mac sleeps are still
    * recorded, stamped with the real boot time.
    */
-  #checkReboot(bootedAt) {
+  #checkReboot(bootedAt, uptimeSec) {
     const now = Date.now();
     const storedBootedAt = Number(this.db.getMeta('bootedAt')) || null;
     const lastSeen = Number(this.db.getMeta('lastSeenAt')) || null;
     this.db.setMeta('lastSeenAt', now);
+    // While this process has a previous reading, uptime itself decides (see
+    // uptimeContinues): a wall-clock step moves bootedAt without any reboot.
+    const read = { uptimeSec, wall: now, mono: performance.now() };
+    const prev = this.lastUptime;
+    this.lastUptime = read;
+    const continues = prev ? uptimeContinues(prev, read) : null;
+    if (continues) {
+      if (storedBootedAt && Math.abs(bootedAt - storedBootedAt) > SAME_BOOT_MS) this.db.setMeta('bootedAt', bootedAt);
+      return;
+    }
     const reboot = detectReboot({
       bootedAt,
       storedBootedAt,
-      logs: storedBootedAt ? this.db.logsBetween(bootedAt - 15 * 60_000, bootedAt + 5 * 60_000) : [],
+      rebooted: continues === false,
+      logs: storedBootedAt || continues === false ? this.db.logsBetween(bootedAt - 15 * 60_000, bootedAt + 5 * 60_000) : [],
     });
     if (reboot) {
       this.db.insertReboot({ ...reboot, detected_at: now, last_seen_before: lastSeen });
@@ -302,6 +360,15 @@ export class Collector extends EventEmitter {
 
   /** Record Insight's own events in the log stream so gaps and outages are visible in context. */
   #event(level, message, facility = 'collector') {
-    this.db.insertMany([{ ts: Date.now(), source: 'insight', facility, level, message }]);
+    this.#safely(() => this.db.insertMany([{ ts: Date.now(), source: 'insight', facility, level, message }]));
+  }
+
+  /** A failing DB write (full or dying SD card) is logged, never allowed to stop polling. */
+  #safely(fn) {
+    try {
+      fn();
+    } catch (e) {
+      this.log.error(`[collector] database write failed: ${e.message}`);
+    }
   }
 }

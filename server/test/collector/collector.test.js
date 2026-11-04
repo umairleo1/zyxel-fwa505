@@ -10,6 +10,7 @@ function harness(script) {
     insertMany() {},
     insertOutage: (o) => outages.push(o),
     insertMetric() {},
+    recordCarriers() {},
     insertSystem() {},
     getMeta: () => null,
     setMeta() {},
@@ -29,6 +30,8 @@ function harness(script) {
       return {};
     },
     async logout() {},
+    suspend() {},
+    resume() {},
   };
   const c = new Collector({ client, db, pollIntervalSec: 120, statusIntervalSec: 5, log: { warn() {}, info() {} } });
   return { c, outages };
@@ -68,6 +71,7 @@ function rebootHarness(meta, uptimeSec, logs = []) {
     insertMany: (rows) => events.push(...rows),
     insertOutage() {},
     insertMetric() {},
+    recordCarriers() {},
     insertSystem() {},
     getMeta: (k) => meta.get(k) ?? null,
     setMeta: (k, v) => meta.set(k, String(v)),
@@ -85,6 +89,8 @@ function rebootHarness(meta, uptimeSec, logs = []) {
       return {};
     },
     async logout() {},
+    suspend() {},
+    resume() {},
   };
   const c = new Collector({ client, db, pollIntervalSec: 120, statusIntervalSec: 5, log: { warn() {}, info() {} } });
   return { c, reboots, events };
@@ -122,4 +128,117 @@ test('uptime jitter is not mistaken for a reboot', async () => {
   await h.c.tickForTest();
   await h.c.stop();
   assert.equal(h.reboots.length, 0);
+});
+
+/** Client whose getLog blocks until release(); counts calls and concurrency. */
+function blockingHarness() {
+  const calls = { log: 0, status: 0, maxConcurrent: 0, suspended: 0, resumed: [] };
+  let active = 0;
+  let release;
+  const gate = new Promise((r) => (release = r));
+  const enter = async (fn) => {
+    active++;
+    calls.maxConcurrent = Math.max(calls.maxConcurrent, active);
+    try {
+      return await fn();
+    } finally {
+      active--;
+    }
+  };
+  const client = {
+    getLog: () =>
+      enter(async () => {
+        calls.log++;
+        await gate;
+        return [];
+      }),
+    getStatus: () => enter(async () => (calls.status++, { Object: [{ DeviceInfo: { UpTime: 100 } }] })),
+    getCellwanStatus: async () => ({}),
+    logout: async () => {},
+    suspend: () => calls.suspended++,
+    resume: (o) => calls.resumed.push(o),
+  };
+  const db = {
+    lastRaw: () => [],
+    insertMany() {},
+    insertOutage() {},
+    insertMetric() {},
+    recordCarriers() {},
+    insertSystem() {},
+    getMeta: () => null,
+    setMeta() {},
+    logsBetween: () => [],
+  };
+  const c = new Collector({ client, db, pollIntervalSec: 120, statusIntervalSec: 5, log: { warn() {}, info() {}, error() {} } });
+  return { c, calls, release };
+}
+
+const settle = () => new Promise((r) => setTimeout(r, 30));
+
+test('pause during a poll stops it before the next router request', async () => {
+  const { c, calls, release } = blockingHarness();
+  const tick = c.tickForTest();
+  await settle();
+  await c.pause();
+  release();
+  await tick;
+  assert.equal(calls.suspended, 1, 'client suspended before logout');
+  assert.equal(calls.log, 1, 'the second log was not requested');
+  assert.equal(calls.status, 0, 'status was not requested');
+  assert.equal(c.state.phase, 'paused');
+  await c.stop();
+});
+
+test('resume while a paused poll is still unwinding never runs two polls at once', async () => {
+  const { c, calls, release } = blockingHarness();
+  const tick = c.tickForTest();
+  await settle();
+  await c.pause();
+  c.resume(); // schedules a tick at once, while the first is still waiting on the router
+  await settle();
+  release();
+  await tick;
+  await settle();
+  assert.equal(calls.maxConcurrent, 1);
+  await c.stop();
+});
+
+test('pollNow during a poll is not lost', async () => {
+  const { c, release } = blockingHarness();
+  c.state.phase = 'ok';
+  const tick = c.tickForTest();
+  await settle();
+  c.pollNow(); // e.g. an SNMP trap arrives mid-poll
+  release();
+  await tick;
+  assert.equal(c.lastLogPoll, 0, 'logs are due again on the next tick');
+  await c.stop();
+});
+
+test('a changed router certificate halts the collector, and Retry trusts the new one', async () => {
+  const { RouterError } = await import('../../src/router/client.js');
+  const { c, calls } = blockingHarness();
+  c.client.getLog = async () => {
+    throw new RouterError('tls', "The router's TLS certificate changed");
+  };
+  await c.tickForTest();
+  assert.equal(c.state.phase, 'halted');
+  c.resume();
+  assert.deepEqual(calls.resumed, [{ trustNewCertificate: true }]);
+  await c.stop();
+});
+
+test('a wall-clock step between reads is not a reboot', async (t) => {
+  const meta = new Map();
+  const h = rebootHarness(meta, 86400);
+  await h.c.tickForTest();
+  // NTP sync on a Pi without an RTC: the clock jumps an hour while ~1 s of uptime passes.
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() + 3600e3 });
+  h.c.client.getStatus = async () => ({ Object: [{ DeviceInfo: { UpTime: 86401 } }] });
+  h.c.lastStatusPoll = 0;
+  h.c.fullStatus = null;
+  await h.c.tickForTest();
+  t.mock.timers.reset();
+  assert.equal(h.reboots.length, 0);
+  await h.c.stop();
 });
