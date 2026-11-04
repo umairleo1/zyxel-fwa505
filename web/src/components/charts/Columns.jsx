@@ -18,12 +18,14 @@ export default function Columns({ items, series, height = 200, format = String }
   const bw = Math.max(2, Math.min(28, slot - 6));
   const y = (v) => M.t + ih - (v / top) * ih;
   const every = Math.ceil(items.length / Math.max(1, Math.floor(iw / 56)));
+  const peak = totals.length ? totals.indexOf(Math.max(...totals)) : -1;
+  const summary = peak < 0 ? 'Column chart, no data' : `${items.length} columns; highest ${format(totals[peak])} (${items[peak].label})`;
   const h = hover != null ? items[hover] : null;
 
   return (
     <div className="chart" ref={ref}>
       {width > 0 && (
-        <svg width={width} height={height} className="chart-svg" onPointerLeave={() => setHover(null)} role="img" aria-label="Column chart">
+        <svg width={width} height={height} className="chart-svg" onPointerLeave={() => setHover(null)} role="img" aria-label={summary}>
           {ticks.map((t) => (
             <g key={t}>
               <line x1={M.l} x2={width - M.r} y1={y(t)} y2={y(t)} className={t === 0 ? 'axis-base' : 'grid'} />

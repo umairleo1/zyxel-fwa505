@@ -11,11 +11,31 @@ export function useInterval(fn, ms) {
   }, [ms]);
 }
 
-/** Current time, re-rendering every `ms`. */
+/**
+ * Current time, re-rendering every `ms` (`null` stops ticking). Call it in the small
+ * leaf that shows the time, not high up the tree: everything below re-renders per tick.
+ */
 export function useNow(ms = 1000) {
-  const [now, setNow] = useState(Date.now());
+  const [now, setNow] = useState(Date.now);
+  // Catch up immediately when ticking (re)starts, e.g. a popover opening.
+  useEffect(() => {
+    if (ms != null) setNow(Date.now());
+  }, [ms]);
   useInterval(() => setNow(Date.now()), ms);
   return now;
+}
+
+/** Whether a CSS media query currently matches; follows changes. */
+export function useMediaQuery(query) {
+  const [matches, setMatches] = useState(() => window.matchMedia(query).matches);
+  useEffect(() => {
+    const mq = window.matchMedia(query);
+    const update = () => setMatches(mq.matches);
+    update();
+    mq.addEventListener('change', update);
+    return () => mq.removeEventListener('change', update);
+  }, [query]);
+  return matches;
 }
 
 /** Leading + trailing throttle: fn runs at most once per `ms`. */

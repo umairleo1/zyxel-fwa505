@@ -66,10 +66,13 @@
 .chart-svg {
   display: block;
   overflow: visible;
-  touch-action: none;
+  /* Horizontal drags scrub the crosshair; vertical swipes still scroll the page. */
+  touch-action: pan-y;
 }
 .chart-svg.brushable {
   cursor: crosshair;
+  /* Drag-to-zoom needs every gesture, or the browser steals it to scroll. */
+  touch-action: none;
 }
 .chart-svg .grid {
   stroke: var(--grid);

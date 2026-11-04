@@ -3,6 +3,7 @@ export { PageHeader, Panel } from './Layout.jsx';
 export { Bool, Value, KV } from './Values.jsx';
 export { DataTable } from './DataTable.jsx';
 export { Stat } from './Stat.jsx';
+export { When, Uptime } from './Time.jsx';
 export { SourceNote, ErrorNote } from './Notes.jsx';
 export { QualityBadge, Bars, Reading } from './Quality.jsx';
 export { default as Drawer } from './Drawer.jsx';

@@ -65,6 +65,18 @@
   color: var(--muted);
   flex-wrap: wrap;
 }
+.source-note time {
+  font-variant-numeric: tabular-nums;
+}
+/* Holds the layout while a lazily loaded page's code arrives. */
+.page-loading {
+  min-height: 60vh;
+}
+/* Live clock/age text: fixed-width digits so ticking doesn't nudge neighbours. */
+.tabular {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
 .inline-banner {
   margin: 0;
 }
@@ -216,6 +228,11 @@
 }
 .data-table tr.clickable:hover td {
   background: var(--surface-hover);
+}
+/* Rows are focusable; outline inside the row so the scroll container doesn't clip it. */
+.data-table tr.clickable:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
 }
 .data-table tr.is-selected td {
   background: var(--accent-wash);
@@ -525,6 +542,10 @@
   border-color: var(--accent);
   color: #fff;
 }
+.band-chip.is-seen {
+  border-color: var(--accent);
+  color: var(--accent);
+}
 
 /* devices */
 .dev-name {
@@ -568,6 +589,13 @@
   top: 72px;
   max-height: calc(100vh - 88px);
   overflow: auto;
+}
+/* Bottom-sheet drawers (≤1100px) are portalled with a scrim; see Drawer.jsx. */
+.drawer-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 44;
+  background: rgba(0, 0, 0, 0.35);
 }
 .side-drawer .drawer-head {
   border-radius: var(--radius) var(--radius) 0 0;

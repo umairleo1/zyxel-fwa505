@@ -1,7 +1,11 @@
 // The only module that knows the Insight HTTP API's URLs.
 
 /** GET/POST JSON; throws an Error carrying the server's message on non-2xx. */
-async function request(url, opts) {
+async function request(url, opts = {}) {
+  const method = (opts.method ?? 'GET').toUpperCase();
+  // The server rejects state-changing requests without this header. A cross-site form
+  // or simple fetch can't set a custom header without a CORS preflight, so it blocks CSRF.
+  if (method !== 'GET' && method !== 'HEAD') opts = { ...opts, headers: { ...opts.headers, 'X-Insight-Request': '1' } };
   const res = await fetch(url, opts);
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body.error || `${res.status} ${res.statusText}`);
@@ -34,6 +38,7 @@ export const api = {
   metrics: ({ from, to }) => request(`/api/metrics${qs({ from, to })}`),
   traffic: ({ from, to }) => request(`/api/traffic${qs({ from, to })}`),
   system: ({ from, to }) => request(`/api/system${qs({ from, to })}`),
+  bands: () => request('/api/bands'),
   devices: () => request('/api/devices'),
   device: (mac, { from } = {}) => request(`/api/devices/${encodeURIComponent(mac)}${qs({ from })}`),
   insights: ({ from, fresh }) => request(`/api/insights${qs({ from, fresh })}`),

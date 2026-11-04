@@ -3,6 +3,7 @@ import { api } from '../api/client.js';
 import { useAsync, useRouterData } from '../hooks/index.js';
 import { useLive } from '../app/live.js';
 import { formatBps, formatBytes, formatFull, formatDayMonth } from '../lib/format.js';
+import { usageToday } from '../lib/traffic.js';
 import { DataTable, PageHeader, Panel, Stat } from '../components/ui/index.js';
 import { SERIES as SERIES_BY_ID, rangeOptions } from '../lib/domain.js';
 import Segmented from '../components/ui/Segmented.jsx';
@@ -19,12 +20,11 @@ const DAY_SERIES = [SERIES_BY_ID.download, SERIES_BY_ID.upload];
 export default function Traffic() {
   const { ticks } = useLive();
   const [span, setSpan] = useState(86400e3);
-  const now = Date.now();
-  const t = useAsync(() => api.traffic({ from: now - span }), [span, ticks.traffic]);
-  const week = useAsync(() => api.traffic({ from: now - 14 * 86400e3 }), [Math.floor(ticks.traffic / 10)]);
+  const t = useAsync(() => api.traffic({ from: Date.now() - span }), [span, ticks.traffic]);
+  const week = useAsync(() => api.traffic({ from: Date.now() - 14 * 86400e3 }), [Math.floor(ticks.traffic / 10)]);
   const r = useRouterData(['Traffic_Status'], [ticks.traffic]);
   const d = t.data;
-  const today = week.data?.days?.at(-1);
+  const today = usageToday(week.data?.days);
   const ts = r.get('Traffic_Status')?.[0];
   const ifaces = (ts?.ipIface ?? []).map((i, k) => ({ ...i, st: ts.ipIfaceSt?.[k] ?? {} }));
   const ports = (ts?.ethIface ?? []).map((i, k) => ({ ...i, st: ts.ethIfaceSt?.[k] ?? {} })).filter((p) => p.Status !== 'NotPresent');
@@ -63,8 +63,9 @@ export default function Traffic() {
         <TimeSeries
           points={d?.series ?? []}
           series={SERIES}
-          from={now - span}
-          to={now}
+          // The fetched window, so lines don't slide left between refreshes.
+          from={d?.from ?? Date.now() - span}
+          to={d?.to ?? Date.now()}
           height={240}
           format={formatBps}
           yMin={0}

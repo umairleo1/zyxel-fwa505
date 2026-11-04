@@ -1,13 +1,13 @@
-import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../api/client.js';
 import { formatClock, formatDay, formatFull, formatNumber } from '../../lib/format.js';
 import { SOURCE_LABELS, levelGroup } from '../../lib/domain.js';
+import { appendPage, dayBreaks, highlightRe, splitMatches } from '../../lib/logs.js';
 import LogDrawer from './LogDrawer.jsx';
 
-const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-function Highlight({ text, q }) {
-  if (!q) return text;
-  return text.split(new RegExp(`(${escapeRe(q)})`, 'ig')).map((part, i) => (i % 2 ? <mark key={i}>{part}</mark> : part));
+function Highlight({ text, re }) {
+  if (!re) return text;
+  return splitMatches(text, re).map((part, i) => (i % 2 ? <mark key={i}>{part}</mark> : part));
 }
 const inField = () => ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName);
 
@@ -26,6 +26,8 @@ export default function LogTable({ query, filterKey, refreshKey, live, setFilter
   const reqId = useRef(0);
   const maxId = useRef(0);
   const paged = useRef(false);
+  const paging = useRef(false); // a loadMore is in flight (state would lag a render behind)
+  const cursorReq = useRef(0); // the first-page request the current cursor belongs to
   const rowRefs = useRef(new Map());
   const sentinel = useRef(null);
 
@@ -40,11 +42,16 @@ export default function LogTable({ query, filterKey, refreshKey, live, setFilter
       for (const r of page.items) if (r.id > maxId.current) maxId.current = r.id;
       setItems(page.items);
       setCursor(page.nextCursor);
+      cursorReq.current = id;
       setTotal(page.total);
       setError(null);
       paged.current = false;
     } catch (e) {
-      if (id === reqId.current) setError(e.message);
+      if (id !== reqId.current) return;
+      setError(e.message);
+      // A failed live refresh leaves the same query on screen: its cursor still
+      // applies, so keep infinite scroll working. (After a filter change it doesn't.)
+      if (isRefresh) cursorReq.current = id;
     } finally {
       if (id === reqId.current) setLoading(false);
     }
@@ -61,19 +68,30 @@ export default function LogTable({ query, filterKey, refreshKey, live, setFilter
   }, [refreshKey, live, loadFirst]);
 
   const loadMore = useCallback(async () => {
-    if (!cursor || loadingMore) return;
+    // Tie this page to the current first-page request: if filters change or page 1 is
+    // reloaded meanwhile, reqId moves on and this result (old query, old cursor) is dropped.
+    // While a new first page is still loading, the cursor is the old query's: wait.
+    const id = reqId.current;
+    if (!cursor || paging.current || cursorReq.current !== id) return;
+    const wasPaged = paged.current;
+    // Mark paging before awaiting so a live tick doesn't replace page 1 under us.
+    paging.current = true;
+    paged.current = true;
     setLoadingMore(true);
     try {
       const page = await api.logs(queryRef.current, cursor);
-      paged.current = true;
-      setItems((prev) => [...prev, ...page.items]);
+      if (id !== reqId.current) return;
+      setItems((prev) => appendPage(prev, page.items));
       setCursor(page.nextCursor);
     } catch (e) {
+      if (id !== reqId.current) return;
+      paged.current = wasPaged;
       toast(`Couldn't load older entries: ${e.message}`, 'critical');
     } finally {
+      paging.current = false;
       setLoadingMore(false);
     }
-  }, [cursor, loadingMore, toast]);
+  }, [cursor, toast]);
 
   // Infinite scroll.
   useEffect(() => {
@@ -103,7 +121,8 @@ export default function LogTable({ query, filterKey, refreshKey, live, setFilter
       let next = null;
       if (e.key === 'j' || e.key === 'ArrowDown') next = Math.min(items.length - 1, idx + 1);
       else if (e.key === 'k' || e.key === 'ArrowUp') next = Math.max(0, idx === -1 ? 0 : idx - 1);
-      else if (e.key === 'Enter' && idx !== -1) {
+      // Enter on a focused button/link (e.g. the drawer's close) is that control's, not ours.
+      else if (e.key === 'Enter' && idx !== -1 && !e.target.closest?.('button, a, [tabindex]')) {
         setDrawerOpen((o) => !o);
         return;
       } else return;
@@ -117,7 +136,9 @@ export default function LogTable({ query, filterKey, refreshKey, live, setFilter
   }, [items, selectedId, drawerOpen, searchRef]);
 
   const selectedRow = drawerOpen ? items.find((r) => r.id === selectedId) : null;
-  let lastDay = null;
+  // Per-render work for a long table, hoisted: one RegExp per search, day breaks per page load.
+  const re = useMemo(() => highlightRe(query.q), [query.q]);
+  const breaks = useMemo(() => dayBreaks(items), [items]);
 
   return (
     <section className={`panel logs-panel ${selectedRow ? 'with-drawer' : ''}`} aria-label="Log entries">
@@ -151,9 +172,7 @@ export default function LogTable({ query, filterKey, refreshKey, live, setFilter
             </thead>
             <tbody>
               {items.map((r) => {
-                const day = new Date(r.ts).toDateString();
-                const divider = day !== lastDay;
-                lastDay = day;
+                const divider = breaks.has(r.id);
                 const g = levelGroup(r.level);
                 return (
                   <Fragment key={r.id}>
@@ -183,7 +202,7 @@ export default function LogTable({ query, filterKey, refreshKey, live, setFilter
                       <td className="c-fac mono">{r.facility ?? ''}</td>
                       <td className="c-msg">
                         {r.category && <span className="cat">{r.category}</span>}
-                        <Highlight text={r.message} q={query.q} />
+                        <Highlight text={r.message} re={re} />
                       </td>
                     </tr>
                   </Fragment>

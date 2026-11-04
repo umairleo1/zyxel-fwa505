@@ -1,5 +1,5 @@
-import { formatAgo } from '../../lib/format.js';
 import { Refresh } from './Icons.jsx';
+import { When } from './Time.jsx';
 
 export function SourceNote({ ids, fetchedAt, stale, onRefresh, loading }) {
   return (
@@ -7,8 +7,8 @@ export function SourceNote({ ids, fetchedAt, stale, onRefresh, loading }) {
       {ids && <span className="mono">{[].concat(ids).join(' · ')}</span>}
       {fetchedAt && (
         <span>
-          · read {formatAgo(fetchedAt)}
-          {stale ? ' (cached, collector paused)' : ''}
+          · read <When ts={fetchedAt} seconds />
+          {stale ? ' (cached: router not being read right now)' : ''}
         </span>
       )}
       {onRefresh && (

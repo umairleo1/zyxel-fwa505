@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { safeStorage } from '../../lib/storage.js';
-import { formatAgo } from '../../lib/format.js';
 import { Alert, Info, X } from '../ui/Icons.jsx';
+import { When } from '../ui/Time.jsx';
 
-export default function Banners({ status, now, busy, onAction }) {
+export default function Banners({ status, busy, onAction }) {
   const [hintHidden, setHidden] = useState(() => safeStorage.get('insight.hideSetupHint') === '1');
   if (!status) return null;
   const { collector: c, syslog: s } = status;
@@ -29,7 +29,12 @@ export default function Banners({ status, now, busy, onAction }) {
         <Alert />
         <div>
           <strong>Router unreachable.</strong> {c.lastError?.message}
-          <span className="banner-detail">Retrying {formatAgo(c.nextAttemptAt, now)}.</span>
+          {/* A clock time rather than a per-second countdown, so the banner doesn't reflow. */}
+          {c.nextAttemptAt && (
+            <span className="banner-detail">
+              Next attempt at <When ts={c.nextAttemptAt} seconds />.
+            </span>
+          )}
         </div>
       </div>,
     );

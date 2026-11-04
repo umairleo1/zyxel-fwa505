@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from './api/client.js';
-import { useInterval, useNow, useServerEvents, useThrottle, useTheme } from './hooks/index.js';
+import { useInterval, useServerEvents, useThrottle, useTheme } from './hooks/index.js';
 import { LiveContext } from './app/live.js';
 import { href, navigate, useRoute } from './app/route.jsx';
 import { NAV_ITEMS } from './app/nav.js';
@@ -9,14 +9,16 @@ import TopBar from './components/shell/TopBar.jsx';
 import Banners from './components/shell/Banners.jsx';
 import { Check, Alert } from './components/ui/Icons.jsx';
 import Dashboard from './pages/Dashboard.jsx';
-import Insights from './pages/Insights.jsx';
 import Cellular from './pages/Cellular.jsx';
 import Devices from './pages/Devices.jsx';
 import WiFi from './pages/WiFi.jsx';
 import Traffic from './pages/Traffic.jsx';
 import System from './pages/System.jsx';
 import Tables from './pages/Tables.jsx';
-import Settings from './pages/settings/Settings.jsx';
+
+// Less-visited pages load on demand; settings carry the large field definitions.
+const Insights = lazy(() => import('./pages/Insights.jsx'));
+const Settings = lazy(() => import('./pages/settings/Settings.jsx'));
 
 // With the event stream connected, data refreshes on push; the slow tick only slides
 // preset time windows forward. Without it, fall back to polling.
@@ -48,7 +50,6 @@ export default function App() {
   const [menuOpen, setMenuOpen] = useState(false);
   const liveRef = useRef(live);
   liveRef.current = live;
-  const now = useNow(1000);
 
   const toast = useCallback((message, tone = 'good') => {
     const id = Math.random();
@@ -116,7 +117,9 @@ export default function App() {
     if (on) setTicks((t) => ({ data: t.data + 1, metrics: t.metrics + 1, traffic: t.traffic + 1, devices: t.devices + 1 }));
   };
 
-  const ctx = useMemo(() => ({ status, now, live, realtime, ticks, toast }), [status, now, live, realtime, ticks, toast]);
+  // No ticking clock in here: every consumer re-renders when this changes. Components
+  // that show live time call useNow() themselves.
+  const ctx = useMemo(() => ({ status, live, realtime, ticks, toast }), [status, live, realtime, ticks, toast]);
   const navItem = NAV_ITEMS.find((i) => i.id === route) ?? NAV_ITEMS[0];
   const Page = route.startsWith('settings/') ? Settings : (PAGES[route] ?? Dashboard);
 
@@ -142,7 +145,6 @@ export default function App() {
             status={status}
             offline={offline}
             realtime={realtime}
-            now={now}
             busy={busy}
             onAction={onAction}
             live={live}
@@ -151,8 +153,10 @@ export default function App() {
             setTheme={setTheme}
           />
           <main className="main">
-            <Banners status={status} now={now} busy={busy} onAction={onAction} />
-            <Page key={route} pageId={route} />
+            <Banners status={status} busy={busy} onAction={onAction} />
+            <Suspense fallback={<div className="page-loading" aria-busy="true" />}>
+              <Page key={route} pageId={route} />
+            </Suspense>
           </main>
         </div>
       </div>

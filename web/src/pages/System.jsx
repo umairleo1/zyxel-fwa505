@@ -3,7 +3,7 @@ import { api } from '../api/client.js';
 import { useAsync, useRouterData } from '../hooks/index.js';
 import { useLive } from '../app/live.js';
 import { formatDuration, formatFull } from '../lib/format.js';
-import { DataTable, KV, PageHeader, Panel, Stat } from '../components/ui/index.js';
+import { DataTable, KV, PageHeader, Panel, Stat, Uptime } from '../components/ui/index.js';
 import { SERIES as SERIES_BY_ID, rangeOptions } from '../lib/domain.js';
 import Segmented from '../components/ui/Segmented.jsx';
 import TimeSeries from '../components/charts/TimeSeries.jsx';
@@ -12,7 +12,7 @@ import Legend from '../components/charts/Legend.jsx';
 const SERIES = [SERIES_BY_ID.cpu, SERIES_BY_ID.memory];
 
 export default function System() {
-  const { status, now, ticks } = useLive();
+  const { status, ticks } = useLive();
   const [span, setSpan] = useState(86400e3);
   const sys = useAsync(() => api.system({ from: Date.now() - span }), [span, Math.floor(ticks.metrics / 12)]);
   const r = useRouterData(['status'], [Math.floor(ticks.metrics / 12)]);
@@ -25,9 +25,8 @@ export default function System() {
     cpu: x.cpu,
     mem: x.mem_total ? Math.round(((x.mem_total - x.mem_free) / x.mem_total) * 1000) / 10 : null,
   }));
-  const uptime = router?.uptimeSec != null ? router.uptimeSec + (now - router.fetchedAt) / 1000 : null;
   // The router reports an instantaneous CPU figure; average the last 15 minutes for the headline.
-  const recent = points.filter((p) => p.t >= Date.now() - 15 * 60e3 && p.cpu != null);
+  const recent = points.filter((p) => p.t >= (sys.data?.to ?? 0) - 15 * 60e3 && p.cpu != null);
   const cpuAvg = recent.length ? Math.round((recent.reduce((a, p) => a + p.cpu, 0) / recent.length) * 10) / 10 : s?.cpu;
   const cpuPeak = recent.length ? Math.max(...recent.map((p) => p.cpu)) : null;
   const dev = st?.DeviceInfo ?? router?.device;
@@ -38,7 +37,7 @@ export default function System() {
         <Segmented options={rangeOptions()} value={span} onChange={setSpan} label="Range" />
       </PageHeader>
       <div className="tiles">
-        <Stat label="Uptime" value={formatDuration(uptime)} sub={router?.bootedAt ? `Booted ${formatFull(router.bootedAt)}` : ''} />
+        <Stat label="Uptime" value={<Uptime router={router} />} sub={router?.bootedAt ? `Booted ${formatFull(router.bootedAt)}` : ''} />
         <Stat
           label="CPU · 15 min average"
           value={cpuAvg ?? '—'}
@@ -66,8 +65,10 @@ export default function System() {
         <TimeSeries
           points={points}
           series={SERIES}
-          from={Date.now() - span}
-          to={Date.now()}
+          // The window the data was fetched for, not "now": recomputing it per render
+          // slides the lines left between refreshes.
+          from={sys.data?.from ?? Date.now() - span}
+          to={sys.data?.to ?? Date.now()}
           height={200}
           format={(v) => `${Math.round(v)}%`}
           yMin={0}

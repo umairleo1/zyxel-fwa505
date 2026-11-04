@@ -150,10 +150,14 @@
 .health-detail {
   grid-column: 2 / -1;
   font-size: 12px;
+  font-variant-numeric: tabular-nums;
   color: var(--muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.health-detail.is-wrapped {
+  white-space: normal;
 }
 .conn-label {
   font-weight: 600;

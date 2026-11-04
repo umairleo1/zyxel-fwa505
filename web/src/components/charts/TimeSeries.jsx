@@ -2,7 +2,7 @@ import { useRef, useState } from 'react';
 import { useElementWidth } from '../../hooks/index.js';
 import { formatFull, niceTicks, timeTicks } from '../../lib/format.js';
 import Tooltip from './Tooltip.jsx';
-import { clampTooltip } from './svg.js';
+import { clampTooltip, seriesSummary } from './svg.js';
 
 const M = { t: 10, r: 56, b: 22, l: 52 };
 const LABEL_MIN_GAP = 12; // px between end labels before one is dropped
@@ -108,7 +108,7 @@ export default function TimeSeries({
           onPointerMove={onMove}
           onPointerLeave={() => setHoverT(null)}
           role="img"
-          aria-label={ariaLabel ?? series.map((s) => s.label).join(', ')}
+          aria-label={`${ariaLabel ?? series.map((s) => s.label).join(', ')} — ${seriesSummary(points, series, format)}`}
         >
           {ticks.map((t) => (
             <g key={t}>

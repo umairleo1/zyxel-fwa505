@@ -2,8 +2,9 @@ import { useState } from 'react';
 import { api } from '../api/client.js';
 import { useAsync, useRouterData } from '../hooks/index.js';
 import { useLive } from '../app/live.js';
-import { formatAgo, formatFull, formatDuration } from '../lib/format.js';
-import { DataTable, KV, PageHeader, Panel, Stat } from '../components/ui/index.js';
+import { formatFull, formatDuration, formatWhen } from '../lib/format.js';
+import { deviceEvents } from '../lib/devices.js';
+import { DataTable, KV, PageHeader, Panel, Stat, When } from '../components/ui/index.js';
 import Segmented from '../components/ui/Segmented.jsx';
 import { SERIES } from '../lib/domain.js';
 import SignalBars from '../components/ui/SignalBars.jsx';
@@ -12,12 +13,22 @@ import Legend from '../components/charts/Legend.jsx';
 import Drawer from '../components/ui/Drawer.jsx';
 
 const DAY = 86400e3;
+const EVENT_LIMIT = 20;
+const deviceLogs = (q) => api.logs({ source: 'insight', facility: 'devices', q }, undefined, EVENT_LIMIT);
 
 function DeviceDrawer({ device, host, onClose }) {
-  const detail = useAsync(() => api.device(device.mac), [device.mac, device.last_seen]);
+  // Keep the window the history was fetched for, so the chart doesn't slide between refreshes.
+  const detail = useAsync(async () => {
+    const to = Date.now();
+    const from = to - DAY;
+    return { ...(await api.device(device.mac, { from })), from, to };
+  }, [device.mac, device.last_seen]);
+  // Search by MAC (new events) and by name (events stored before they carried the MAC),
+  // then keep only this device's; see lib/devices.js.
   const events = useAsync(
-    () => api.logs({ source: 'insight', facility: 'devices', q: device.name ?? device.mac }, undefined, 20),
-    [device.mac, device.last_seen],
+    async () =>
+      deviceEvents(await Promise.all([deviceLogs(device.mac), device.name ? deviceLogs(device.name) : null]), device, EVENT_LIMIT),
+    [device.mac, device.name, device.last_seen],
   );
   const hist = detail.data?.history ?? [];
   const points = hist.map((h) => ({ t: h.ts, rssi: h.rssi, snr: h.snr }));
@@ -33,7 +44,7 @@ function DeviceDrawer({ device, host, onClose }) {
       <KV
         showAll
         obj={{
-          Status: device.online ? 'Online' : `Offline · last seen ${formatAgo(device.last_seen)}`,
+          Status: device.online ? 'Online' : `Offline · last seen ${formatWhen(device.last_seen)}`,
           'IP address': device.ip,
           'MAC address': device.mac,
           Connection: device.conn,
@@ -56,8 +67,8 @@ function DeviceDrawer({ device, host, onClose }) {
           <TimeSeries
             points={points}
             series={[SERIES.rssi]}
-            from={Date.now() - DAY}
-            to={Date.now()}
+            from={detail.data.from}
+            to={detail.data.to}
             height={150}
             format={(v) => String(Math.round(v)).replace('-', '−')}
           />
@@ -67,9 +78,9 @@ function DeviceDrawer({ device, host, onClose }) {
         <div className="drawer-sub">
           <b>Activity</b>
         </div>
-        {events.data?.items?.length ? (
+        {events.data?.length ? (
           <ul className="timeline">
-            {events.data.items.map((e) => (
+            {events.data.map((e) => (
               <li key={e.id}>
                 <span className="dot dot-neutral" />
                 <span className="muted small mono">{formatFull(e.ts)}</span> {e.message}
@@ -157,13 +168,12 @@ export default function Devices() {
               {
                 key: 'first_seen',
                 label: 'First seen',
-                render: (d) => <span title={formatFull(d.first_seen)}>{formatAgo(d.first_seen)}</span>,
+                render: (d) => <When ts={d.first_seen} />,
               },
               {
                 key: 'last_seen',
                 label: 'Last seen',
-                render: (d) =>
-                  d.online ? <span className="tone-good">Now</span> : <span title={formatFull(d.last_seen)}>{formatAgo(d.last_seen)}</span>,
+                render: (d) => (d.online ? <span className="tone-good">Now</span> : <When ts={d.last_seen} />),
               },
             ]}
           />

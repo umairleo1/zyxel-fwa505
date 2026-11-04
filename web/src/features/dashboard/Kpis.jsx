@@ -1,6 +1,7 @@
-import { formatCompact, formatDuration, formatFull, formatSigned } from '../../lib/format.js';
+import { formatCompact, formatFull, formatSigned } from '../../lib/format.js';
 import { qualityTone, rsrpBars, rsrpQuality, sinrQuality, SEVERITY_SERIES } from '../../lib/domain.js';
 import { Bars, QualityBadge } from '../../components/ui/Quality.jsx';
+import { Uptime } from '../../components/ui/Time.jsx';
 
 function Sparkline({ values, width = 112, height = 30 }) {
   const pts = values.map((v, i) => [i, v]).filter(([, v]) => v != null);
@@ -61,11 +62,10 @@ function SignalTile({ title, leg, series, empty }) {
   );
 }
 
-export default function Kpis({ router, now, metrics, histogram }) {
+export default function Kpis({ router, metrics, histogram }) {
   const signal = router?.signal;
   const pts = metrics?.points ?? [];
   const tail = (k) => pts.slice(-24).map((p) => p[k]);
-  const liveUptime = router?.uptimeSec != null ? router.uptimeSec + (now - router.fetchedAt) / 1000 : null;
   const totals = Object.fromEntries(SEVERITY_SERIES.map((s) => [s.key, 0]));
   for (const b of histogram?.buckets ?? []) for (const s of SEVERITY_SERIES) totals[s.key] += b[s.key];
   const total = Object.values(totals).reduce((a, b) => a + b, 0);
@@ -74,7 +74,9 @@ export default function Kpis({ router, now, metrics, histogram }) {
     <div className="tiles">
       <section className="tile">
         <h3 className="tile-label">Router uptime</h3>
-        <p className="tile-value">{formatDuration(liveUptime)}</p>
+        <p className="tile-value">
+          <Uptime router={router} />
+        </p>
         <p className="tile-sub">{router?.bootedAt ? <>Booted {formatFull(router.bootedAt)}</> : 'Waiting for first status poll'}</p>
         {signal && (
           <p className="tile-sub">

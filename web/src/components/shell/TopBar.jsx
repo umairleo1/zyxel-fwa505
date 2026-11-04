@@ -4,7 +4,7 @@ import { Menu, Monitor, Moon, Pause, Play, Refresh, Sun } from '../ui/Icons.jsx'
 const THEMES = ['system', 'light', 'dark'];
 const THEME_ICON = { system: Monitor, light: Sun, dark: Moon };
 
-export default function TopBar({ title, section, onMenu, status, offline, realtime, now, busy, onAction, live, setLive, theme, setTheme }) {
+export default function TopBar({ title, section, onMenu, status, offline, realtime, busy, onAction, live, setLive, theme, setTheme }) {
   const c = status?.collector;
   const ThemeIcon = THEME_ICON[theme];
 
@@ -32,7 +32,7 @@ export default function TopBar({ title, section, onMenu, status, offline, realti
       </div>
 
       <div className="topbar-actions">
-        <HealthMenu status={status} offline={offline} realtime={realtime} now={now} />
+        <HealthMenu status={status} offline={offline} realtime={realtime} />
         <span className="topbar-divider" aria-hidden="true" />
 
         {c?.phase === 'paused' || c?.phase === 'halted' ? (

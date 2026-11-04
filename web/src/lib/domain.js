@@ -41,3 +41,32 @@ export const RANGES = [
 /** Segmented-control options for the given preset keys (all by default). */
 export const rangeOptions = (keys = RANGES.map((r) => r.key)) =>
   RANGES.filter((r) => keys.includes(r.key)).map((r) => ({ value: r.ms, label: r.label }));
+
+/** Frequency of each band the FWA505 supports, for labels. TDD/SDL marked where it matters. */
+export const BAND_FREQ = {
+  B1: '2100 MHz',
+  B3: '1800 MHz',
+  B5: '850 MHz',
+  B7: '2600 MHz',
+  B8: '900 MHz',
+  B20: '800 MHz',
+  B28: '700 MHz',
+  B32: '1500 MHz SDL',
+  B38: '2600 MHz TDD',
+  B40: '2300 MHz TDD',
+  B41: '2500 MHz TDD',
+  B42: '3500 MHz TDD',
+  B43: '3700 MHz TDD',
+  n1: '2100 MHz',
+  n3: '1800 MHz',
+  n5: '850 MHz',
+  n7: '2600 MHz',
+  n8: '900 MHz',
+  n20: '800 MHz',
+  n28: '700 MHz',
+  n38: '2600 MHz TDD',
+  n40: '2300 MHz TDD',
+  n41: '2500 MHz TDD',
+  n77: '3.3–4.2 GHz TDD',
+  n78: '3.3–3.8 GHz TDD',
+};

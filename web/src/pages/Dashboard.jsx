@@ -10,7 +10,7 @@ import Carriers from '../features/cellular/Carriers.jsx';
 import LogTable from '../features/dashboard/LogTable.jsx';
 
 export default function Dashboard() {
-  const { status, now, live, ticks, toast } = useLive();
+  const { status, live, ticks, toast } = useLive();
   const [filters, setFilters] = useUrlFilters();
   const searchRef = useRef(null);
   const filtersRef = useRef(filters);
@@ -37,7 +37,7 @@ export default function Dashboard() {
   return (
     <>
       <FilterBar ref={searchRef} filters={filters} setFilters={setFilters} facets={facets.data} exportHref={api.exportUrl(query)} />
-      <Kpis router={status?.collector.router} now={now} metrics={metrics.data} histogram={histogram.data} />
+      <Kpis router={status?.collector.router} metrics={metrics.data} histogram={histogram.data} />
       <div className="charts">
         <VolumeChart data={histogram.data} loading={histogram.loading} onBrush={(from, to) => setFilters({ range: 'custom', from, to })} />
         <SignalChart metrics={metrics.data} range={range} signal={status?.collector.router?.signal} loading={metrics.loading} />

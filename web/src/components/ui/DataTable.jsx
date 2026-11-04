@@ -3,6 +3,13 @@ import { humanize, isNoise, isEmpty } from '../../lib/labels.js';
 import { Eye, Search } from './Icons.jsx';
 import { Value } from './Values.jsx';
 
+/** Enter/Space on the row itself (not a control inside it) activates it, like a button. */
+function activateKey(e) {
+  if (e.target !== e.currentTarget || (e.key !== 'Enter' && e.key !== ' ')) return false;
+  e.preventDefault(); // Space would scroll the page
+  return true;
+}
+
 /** Auto-columned table for arrays of objects. columns: [{ key, label?, render?, align? }] */
 export function DataTable({ rows, columns, empty = 'No entries', search = false, maxAuto = 9, rowKey, onRowClick, selectedKey }) {
   const [q, setQ] = useState('');
@@ -54,6 +61,10 @@ export function DataTable({ rows, columns, empty = 'No entries', search = false,
                   key={key}
                   className={`${onRowClick ? 'clickable' : ''} ${selectedKey != null && key === selectedKey ? 'is-selected' : ''}`}
                   onClick={onRowClick ? () => onRowClick(r) : undefined}
+                  // Clickable rows are reachable and operable from the keyboard too.
+                  tabIndex={onRowClick ? 0 : undefined}
+                  onKeyDown={onRowClick ? (e) => activateKey(e) && onRowClick(r) : undefined}
+                  aria-current={onRowClick && selectedKey != null && key === selectedKey ? 'true' : undefined}
                 >
                   {cols.map((c) => (
                     <td key={c.key} className={c.align === 'right' ? 'num' : ''}>
