@@ -1,7 +1,30 @@
 import { Router } from 'express';
 import { bucketFor, int, logFilters, parseCursor } from '../params.js';
+import { csvLine, writeAll } from '../csv.js';
 
-const csvCell = (v) => (v == null ? '' : /[",\n\r]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v));
+const EXPORT_PAGE = 1000;
+
+/**
+ * CSV lines for every matching row, newest first, read in keyset pages: no SQLite
+ * statement stays open while we wait for a slow client, and `to` is pinned so rows
+ * arriving mid-export don't shift the pages.
+ */
+export function* exportLines(db, query, now = Date.now()) {
+  const filters = { ...logFilters(query) };
+  filters.to ??= now;
+  yield 'time,source,host,category,facility,level,message\n';
+  let cursor;
+  for (;;) {
+    const rows = db.query({ ...filters, cursor }, EXPORT_PAGE);
+    const page = rows.slice(0, EXPORT_PAGE);
+    for (const row of page) {
+      yield csvLine([new Date(row.ts).toISOString(), row.source, row.host, row.category, row.facility, row.level, row.message]);
+    }
+    if (rows.length <= EXPORT_PAGE) return;
+    const last = page.at(-1);
+    cursor = { ts: last.ts, id: last.id };
+  }
+}
 
 /** Event log: paged search, severity histogram, facets and CSV export. */
 export function logsRoutes({ db }) {
@@ -37,17 +60,11 @@ export function logsRoutes({ db }) {
 
   r.get('/facets', (req, res) => res.json(db.facets({ from: int(req.query.from), to: int(req.query.to) })));
 
-  r.get('/export.csv', (req, res) => {
+  r.get('/export.csv', async (req, res) => {
     const stamp = new Date().toISOString().slice(0, 19).replace(/:/g, '');
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="zyxel-insight-${stamp}.csv"`);
-    res.write('time,source,host,category,facility,level,message\n');
-    for (const row of db.iterate(logFilters(req.query))) {
-      res.write(
-        `${[new Date(row.ts).toISOString(), row.source, row.host, row.category, row.facility, row.level, row.message].map(csvCell).join(',')}\n`,
-      );
-    }
-    res.end();
+    if (await writeAll(res, exportLines(db, req.query))) res.end();
   });
 
   return r;

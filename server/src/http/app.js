@@ -6,12 +6,30 @@ import { telemetryRoutes } from './routes/telemetry.js';
 import { routerDataRoutes } from './routes/routerData.js';
 import { insightsRoutes } from './routes/insights.js';
 import { liveRoutes } from './routes/live.js';
+import { basicAuth, csrfGuard, hostGuard, isLoopback, liveAllowedHostnames, securityHeaders } from './security.js';
 
-/** Build the Express app. deps: { db, hub, collector, routerData, statusPayload, staticDir? } */
+/**
+ * Build the Express app. deps: { db, hub, collector, routerData, statusPayload, staticDir?,
+ * statusIntervalSec?, security?: { password?, allowedHosts?: Set<string> | () => Set<string> } }
+ */
 export function createApp(deps) {
+  const { password = '', allowedHosts = liveAllowedHostnames() } = deps.security ?? {};
   const app = express();
   app.disable('x-powered-by');
-  app.use(express.json());
+
+  // Order matters: headers (so refusals carry them too), then the Host check
+  // (anti DNS-rebinding) before any route, static file or SSE, then auth and CSRF.
+  app.use(securityHeaders);
+  app.use(hostGuard(allowedHosts));
+  app.use(
+    basicAuth({
+      password,
+      // systemd/monitoring on this machine may probe health without the password.
+      exempt: (req) => req.method === 'GET' && req.path === '/api/health' && isLoopback(req.socket.remoteAddress),
+    }),
+  );
+  app.use(csrfGuard);
+  app.use(express.json({ limit: '16kb' }));
 
   const api = express.Router();
   api.use(logsRoutes(deps));
