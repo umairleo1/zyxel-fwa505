@@ -89,3 +89,30 @@ test('reads made elsewhere (e.g. by the collector) are served from the shared ca
   await rd.public('wlan');
   assert.equal(calls, 2);
 });
+
+test('while the collector is backing off, nothing logs in on its own; cached data is served stale', async () => {
+  let gets = 0;
+  const client = {
+    // Like the real client: every read lands in the shared cache via onResponse.
+    getJson: async (path) => {
+      gets++;
+      const data = { result: 'ZCFG_SUCCESS', Object: [{ X: 1 }] };
+      client.onResponse(path, data);
+      return data;
+    },
+  };
+  const collector = { state: { phase: 'ok' } };
+  const rd = createRouterData({ client, collector });
+  await rd.raw('wlan', 0);
+  collector.state.phase = 'backoff';
+  const stale = await rd.raw('wlan', 0);
+  assert.equal(stale.stale, true);
+  await assert.rejects(rd.raw('lanhosts', 0), (e) => e.status === 409 && /unavailable/.test(e.message));
+  assert.equal(gets, 1);
+});
+
+test('object prototype names are not catalog endpoints', async () => {
+  const rd = createRouterData({ client: { getJson: async () => ({}) }, collector: { state: { phase: 'ok' } } });
+  assert.equal(rd.has('constructor'), false);
+  await assert.rejects(rd.raw('toString'), (e) => e.status === 404);
+});
