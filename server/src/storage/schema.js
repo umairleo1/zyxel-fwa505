@@ -1,5 +1,8 @@
+import { backfillBands, setRunStarts } from './bands.js';
+
 /** Create tables/indexes and apply additive migrations. Idempotent. */
 export function migrate(db) {
+  const hadBands = !!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'bands'").get();
   db.exec(`
     PRAGMA journal_mode = WAL;
 
@@ -40,6 +43,20 @@ export function migrate(db) {
     CREATE TABLE IF NOT EXISTS reboots (boot_ts INTEGER PRIMARY KEY, detected_at INTEGER, kind TEXT, reason TEXT, last_seen_before INTEGER);
     CREATE TABLE IF NOT EXISTS outages (start_ts INTEGER PRIMARY KEY, end_ts INTEGER, reason TEXT);
     CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
+
+    -- Every band and cell the router has used (see storage/bands.js). Sums, not samples.
+    CREATE TABLE IF NOT EXISTS bands (
+      band TEXT PRIMARY KEY, rat TEXT, first_seen INTEGER NOT NULL, last_seen INTEGER NOT NULL,
+      run_start INTEGER,
+      seconds REAL NOT NULL DEFAULT 0, primary_seconds REAL NOT NULL DEFAULT 0, best_rsrp REAL,
+      rsrp_sum REAL NOT NULL DEFAULT 0, rsrp_n INTEGER NOT NULL DEFAULT 0,
+      sinr_sum REAL NOT NULL DEFAULT 0, sinr_n INTEGER NOT NULL DEFAULT 0, max_bw REAL
+    );
+    CREATE TABLE IF NOT EXISTS band_cells (
+      band TEXT NOT NULL, pci INTEGER NOT NULL, channel INTEGER,
+      first_seen INTEGER NOT NULL, last_seen INTEGER NOT NULL, best_rsrp REAL,
+      PRIMARY KEY (band, pci)
+    );
   `);
 
   // Columns added after the first release.
@@ -54,5 +71,19 @@ export function migrate(db) {
     ['cell', 'TEXT'],
   ]) {
     if (!metricCols.has(col)) db.exec(`ALTER TABLE metrics ADD COLUMN ${col} ${type}`);
+  }
+
+  // bands tables created before session tracking lack run_start.
+  const addedRunStart = hadBands && !db.prepare('SELECT 1 FROM pragma_table_info(?) WHERE name = ?').get('bands', 'run_start');
+  if (addedRunStart) db.exec('ALTER TABLE bands ADD COLUMN run_start INTEGER');
+
+  // combo/cell must exist before the backfill reads them. Keyed on the table being
+  // empty rather than new, so a backfill that failed (and rolled back) runs again.
+  // Derived data only: a failure must not stop Insight starting (it retries next start).
+  try {
+    if (!db.prepare('SELECT 1 FROM bands LIMIT 1').get()) backfillBands(db);
+    else if (addedRunStart) setRunStarts(db);
+  } catch (e) {
+    console.error('[db] band history backfill failed; will retry on next start', e);
   }
 }

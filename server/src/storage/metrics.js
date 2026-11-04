@@ -1,4 +1,11 @@
-import { bucketExpr } from './sql.js';
+import { bucketExpr, transaction } from './sql.js';
+
+// Signal samples arrive every 5 s. Writing each in its own commit costs ~17k
+// commits a day on an SD card; buffer them and write once a minute instead.
+// Reads flush first, so callers never see the buffer. A crash loses at most this much.
+const FLUSH_MS = 60_000;
+// If writes keep failing (full disk), keep only the newest hour.
+const MAX_PENDING = 720;
 
 export const METRIC_COLS = ['lte_rsrp', 'lte_rsrq', 'lte_sinr', 'lte_rssi', 'nr_rsrp', 'nr_rsrq', 'nr_sinr', 'nr_rssi'];
 const round1 = (x) => Math.round(x * 10) / 10;
@@ -27,27 +34,47 @@ export function histogramStats(hist, cuts) {
   };
 }
 
-export function metricsRepo(sql, hooks) {
+export function metricsRepo(db, sql, hooks) {
   const insert = () =>
     sql(`INSERT OR REPLACE INTO metrics (ts, uptime, combo, cell, ${METRIC_COLS.join(', ')})
       VALUES (:ts, :uptime, :combo, :cell, ${METRIC_COLS.map((c) => `:${c}`).join(', ')})`);
+  const pending = [];
+
+  function flushMetrics() {
+    if (!pending.length) return;
+    const stmt = insert();
+    transaction(db, () => {
+      for (const m of pending) {
+        stmt.run({
+          ts: m.ts,
+          uptime: m.uptime ?? null,
+          combo: m.combo ?? null,
+          cell: m.cell ?? null,
+          ...Object.fromEntries(METRIC_COLS.map((c) => [c, m[c] ?? null])),
+        });
+      }
+    });
+    pending.length = 0;
+  }
 
   return {
+    flushMetrics,
+
     insertMetric(m) {
-      insert().run({
-        ts: m.ts,
-        uptime: m.uptime ?? null,
-        combo: m.combo ?? null,
-        cell: m.cell ?? null,
-        ...Object.fromEntries(METRIC_COLS.map((c) => [c, m[c] ?? null])),
-      });
+      pending.push(m);
+      if (pending.length > MAX_PENDING) pending.shift();
       hooks.onMetric?.(m);
+      // By sample time; a clock stepping backwards flushes rather than stalls.
+      const age = m.ts - pending[0].ts;
+      if (age >= FLUSH_MS || age < 0) flushMetrics();
     },
 
     /** Signal samples averaged into buckets so long ranges stay light. */
-    metrics: ({ from, to }, bucketMs) =>
-      sql(`SELECT ${bucketExpr} AS t, ${METRIC_COLS.map((c) => `ROUND(AVG(${c}), 1) AS ${c}`).join(', ')}
-        FROM metrics WHERE ts >= ? AND ts <= ? GROUP BY t ORDER BY t`).all(bucketMs, bucketMs, from ?? 0, to ?? Date.now()),
+    metrics: ({ from, to }, bucketMs) => {
+      flushMetrics();
+      return sql(`SELECT ${bucketExpr} AS t, ${METRIC_COLS.map((c) => `ROUND(AVG(${c}), 1) AS ${c}`).join(', ')}
+        FROM metrics WHERE ts >= ? AND ts <= ? GROUP BY t ORDER BY t`).all(bucketMs, bucketMs, from ?? 0, to ?? Date.now());
+    },
 
     /**
      * Distribution statistics for one column. Readings are whole dB(m) values, so a
@@ -56,6 +83,7 @@ export function metricsRepo(sql, hooks) {
      */
     metricStats(col, from, to, cuts) {
       if (!METRIC_COLS.includes(col)) throw new Error(`Unknown metric column ${col}`);
+      flushMetrics();
       const hist = sql(
         `SELECT ${col} AS v, COUNT(*) AS c FROM metrics WHERE ts >= ? AND ts <= ? AND ${col} IS NOT NULL GROUP BY v ORDER BY v`,
       ).all(from, to);
@@ -64,6 +92,7 @@ export function metricsRepo(sql, hooks) {
 
     /** One pass: samples, minutes with data (coverage), 5G samples, distinct cells; plus combo shares. */
     metricCoverage(from, to) {
+      flushMetrics();
       const c = sql(`SELECT COUNT(*) AS n, COUNT(nr_rsrp) AS nr, COUNT(DISTINCT cell) AS cells, COUNT(DISTINCT ts / 60000) AS minutes
         FROM metrics WHERE ts >= ? AND ts <= ?`).get(from, to);
       const combos = sql(

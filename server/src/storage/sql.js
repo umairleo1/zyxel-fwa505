@@ -11,9 +11,24 @@ export function statementCache(db) {
   };
 }
 
-/** Run fn inside a transaction; rolls back and rethrows on error. */
+const depth = new WeakMap(); // db -> open transaction nesting
+
+/**
+ * Run fn inside a transaction; rolls back and rethrows on error. Nested calls
+ * join the outer transaction, so repositories can batch writes freely.
+ */
 export function transaction(db, fn) {
+  const d = depth.get(db) ?? 0;
+  if (d > 0) {
+    depth.set(db, d + 1);
+    try {
+      return fn();
+    } finally {
+      depth.set(db, d);
+    }
+  }
   db.exec('BEGIN');
+  depth.set(db, 1);
   try {
     const result = fn();
     db.exec('COMMIT');
@@ -21,6 +36,8 @@ export function transaction(db, fn) {
   } catch (e) {
     db.exec('ROLLBACK');
     throw e;
+  } finally {
+    depth.set(db, 0);
   }
 }
 
