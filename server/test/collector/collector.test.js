@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { Collector } from '../../src/collector/collector.js';
 import { RouterError } from '../../src/router/client.js';
 
+// `script` has one entry per getLog call. Each poll reads two logs (system,
+// security), so a poll that succeeds consumes two 'ok's; a 'fail' ends the poll.
 function harness(script) {
   const outages = [];
   const db = {
@@ -38,7 +40,7 @@ function harness(script) {
 }
 
 test('a single failed request is a glitch, not an outage', async () => {
-  const { c, outages } = harness(['ok', 'fail', 'ok']);
+  const { c, outages } = harness(['ok', 'ok', 'fail', 'ok', 'ok']); // ok, glitch, ok
   for (let k = 0; k < 3; k++) {
     c.lastLogPoll = 0;
     await c.tickForTest();
@@ -48,7 +50,7 @@ test('a single failed request is a glitch, not an outage', async () => {
 });
 
 test('after a long sleep, an outage starts at the first failure, not the last success before sleep', async () => {
-  const { c, outages } = harness(['ok', 'fail', 'fail', 'ok']);
+  const { c, outages } = harness(['ok', 'ok', 'fail', 'fail', 'ok', 'ok']); // ok, sleep, fail, fail, ok
   c.lastLogPoll = 0;
   await c.tickForTest();
   c.state.lastSuccessAt = Date.now() - 8 * 3600e3; // Mac slept for 8 h
