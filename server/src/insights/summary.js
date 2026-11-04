@@ -1,6 +1,6 @@
 // Derived insights the router's own UI doesn't provide: reliability, signal
 // quality distribution, usage, devices and prioritised recommendations.
-import { RSRP_CUTS, SINR_CUTS } from '@zyxel-insight/shared/quality';
+import { RSRP_CUTS, SINR_CUTS, WIFI_CUTS, wifiQuality } from '@zyxel-insight/shared/quality';
 import { pct } from '../lib/util.js';
 
 /** Everything on the Insights page except the audit. Aggregation happens in SQLite. */
@@ -50,7 +50,8 @@ export function computeInsights({ db, from, to, state, traffic, devices, station
 
   // Devices
   const dev = devices ?? [];
-  const weak = (stations ?? []).filter((s) => s.rssi <= -70);
+  // Anything below "Good" on the shared Wi-Fi scale, so advice and badges agree.
+  const weak = (stations ?? []).filter((s) => s.rssi < WIFI_CUTS[1]);
   const devicesSummary = {
     known: dev.length,
     online: dev.filter((d) => d.online).length,
@@ -136,10 +137,13 @@ function recommend({ state, signal, reliability, system, devicesSummary }) {
     });
   }
   for (const w of devicesSummary.weakWifi) {
+    const poor = wifiQuality(w.rssi) === 'Poor';
     recs.push({
-      severity: 'info',
-      title: `${w.name ?? w.mac} has weak Wi-Fi (${w.rssi} dBm on ${w.band})`,
-      detail: 'Below −70 dBm throughput drops and the device may disconnect.',
+      severity: poor ? 'warn' : 'info',
+      title: `${w.name ?? w.mac} has ${poor ? 'poor' : 'only fair'} Wi-Fi (${w.rssi} dBm on ${w.band})`,
+      detail: poor
+        ? 'Below −75 dBm throughput drops sharply and the device may disconnect.'
+        : 'Below −67 dBm video calls and streaming can stutter; browsing is fine.',
       action:
         w.band === '5GHz'
           ? 'Move it closer, or let it use 2.4 GHz which reaches further.'

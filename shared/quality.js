@@ -27,12 +27,21 @@ export function sinrQuality(db) {
   return 'Poor';
 }
 
-/** Wi-Fi client RSSI. */
+/**
+ * Wi-Fi client RSSI (how well the router hears the device), on the scale used in
+ * Wi-Fi design: -67 dBm is the usual minimum for reliable calls and video (Cisco's
+ * voice-over-Wi-Fi guidance), down to -75 browsing still works but calls and
+ * streams stutter, and below that throughput drops and devices disconnect.
+ * Lower bounds (inclusive) of excellent / good / fair.
+ */
+export const WIFI_CUTS = [-50, -67, -75];
+
 export function wifiQuality(dbm) {
   if (dbm == null) return null;
-  if (dbm >= -55) return 'Excellent';
-  if (dbm >= -65) return 'Good';
-  if (dbm >= -72) return 'Fair';
+  const [excellent, good, fair] = WIFI_CUTS;
+  if (dbm >= excellent) return 'Excellent';
+  if (dbm >= good) return 'Good';
+  if (dbm >= fair) return 'Fair';
   return 'Poor';
 }
 
