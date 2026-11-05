@@ -195,3 +195,169 @@
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
+
+/* Connection timeline (dashboard) */
+.tl-summary {
+  list-style: none;
+  margin: 0;
+  padding: 0 14px 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font-size: 12px;
+  color: var(--text-2);
+}
+.tl-summary b {
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+.tl-swatch-outage {
+  background: var(--critical-wash);
+  box-shadow: inset 0 0 0 1px var(--critical);
+}
+.tl-swatch-outage.is-wan {
+  background: var(--warning-wash);
+  box-shadow: inset 0 0 0 1px var(--warning);
+}
+.cov-swatch {
+  background: repeating-linear-gradient(45deg, var(--baseline) 0 1px, transparent 1px 4px);
+  box-shadow: inset 0 0 0 1px var(--baseline);
+}
+.chart-svg .tl-outage {
+  fill: var(--critical-wash);
+}
+.chart-svg .tl-outage-edge {
+  fill: var(--critical);
+}
+.chart-svg .is-wan .tl-outage {
+  fill: var(--warning-wash);
+}
+.chart-svg .is-wan .tl-outage-edge {
+  fill: var(--warning);
+}
+/* Still going: the band runs to "now" and its edge pulses gently. */
+.chart-svg .is-ongoing .tl-outage-edge {
+  animation: tl-pulse 1.6s ease-in-out infinite;
+}
+@keyframes tl-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chart-svg .is-ongoing .tl-outage-edge {
+    animation: none;
+  }
+}
+.chart-svg .cov-hatch {
+  stroke: var(--baseline);
+  stroke-width: 1.5;
+  opacity: 0.7;
+}
+.chart-svg .cov-outage {
+  fill: var(--critical-wash);
+}
+.chart-svg .cov-label {
+  fill: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+  paint-order: stroke;
+  stroke: var(--surface);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+.chart-svg .tl-guide {
+  stroke: var(--baseline);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  shape-rendering: crispEdges;
+}
+.chart-svg .tl-guide.is-active {
+  stroke: var(--text-2);
+}
+.tl-glyph {
+  stroke: var(--surface);
+  stroke-width: 1.5;
+}
+.tl-cell {
+  fill: var(--text-2);
+}
+.tl-combo {
+  fill: var(--muted);
+}
+.tl-reboot {
+  fill: var(--warning);
+}
+.tl-reboot.is-alert {
+  fill: var(--critical);
+}
+.chart-svg .tl-marker {
+  cursor: pointer;
+  outline: none;
+}
+.chart-svg .tl-hit {
+  fill: transparent;
+}
+.chart-svg .tl-marker.is-active .tl-hit,
+.chart-svg .tl-marker:focus-visible .tl-hit {
+  fill: var(--surface-hover);
+  stroke: var(--focus);
+  rx: 4px;
+}
+.chart-svg .tl-count {
+  fill: var(--text-2);
+  font-size: 10px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+.tooltip.tl-tip {
+  /* Anchored at its bottom edge, just above the marker it describes. */
+  transform: translate(-50%, -100%);
+  width: 280px;
+  max-width: calc(100% - 8px);
+}
+.tl-tip ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.tl-tip-msg {
+  display: block;
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+.tl-tip-hint {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.mini-table .tl-detail {
+  white-space: normal;
+  min-width: 220px;
+}
+.tl-key {
+  padding: 6px 14px 4px;
+  color: var(--muted);
+}
+.tooltip-note {
+  margin-top: 4px;
+  max-width: 240px;
+  color: var(--muted);
+  white-space: normal;
+}
+/* Daily usage: a day Insight only partly watched. */
+.chart-svg .col-flag {
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 1.5;
+}
+.col-flag-key {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border: 1.5px solid var(--muted);
+  border-radius: 50%;
+  vertical-align: 0;
+}

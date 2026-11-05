@@ -94,3 +94,16 @@ test('formatWhen is a stable clock time, with the date on other days', () => {
   assert.match(formatWhen(Date.UTC(2026, 9, 24, 9), now), /24.*10:00/); // 10:00 BST
   assert.equal(formatWhen(null, now), 'never');
 });
+
+test('formatDuration keeps minutes past a day', async () => {
+  const { formatDuration } = await import('../src/lib/format.js');
+  assert.equal(formatDuration(173_979), '2d 0h 19m');
+  assert.equal(formatDuration(3 * 86400), '3d 0h 0m');
+  assert.equal(formatDuration(5400), '1h 30m');
+  assert.equal(formatDuration(125), '2m 5s');
+  assert.equal(formatDuration(9), '9s');
+  assert.equal(formatDuration(null), '—');
+  assert.equal(formatDuration(173_979, { seconds: true }), '2d 0h 19m 39s');
+  assert.equal(formatDuration(5405, { seconds: true }), '1h 30m 5s');
+  assert.equal(formatDuration(125, { seconds: true }), '2m 5s');
+});

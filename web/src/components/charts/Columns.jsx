@@ -5,7 +5,10 @@ import Tooltip from './Tooltip.jsx';
 import { SEGMENT_GAP, clampTooltip, topRounded } from './svg.js';
 
 const M = { t: 10, r: 8, b: 24, l: 52 };
-/** Stacked columns. items: [{ key, label, values: { [seriesKey]: number } }] */
+/**
+ * Stacked columns. items: [{ key, label, title?, values: { [seriesKey]: number }, flag?, note? }].
+ * `flag` puts a small ring above the column (explained by `note` in its tooltip).
+ */
 export default function Columns({ items, series, height = 200, format = String }) {
   const [ref, width] = useElementWidth();
   const [hover, setHover] = useState(null);
@@ -52,6 +55,7 @@ export default function Columns({ items, series, height = 200, format = String }
                     <rect key={s.key} x={x} y={y1 + SEGMENT_GAP} width={bw} height={Math.max(1, y0 - y1 - SEGMENT_GAP)} fill={s.color} />
                   );
                 })}
+                {it.flag && <circle cx={x + bw / 2} cy={y(totals[i]) - 8} r="3" className="col-flag" />}
                 {i % every === 0 && (
                   <text x={M.l + i * slot + slot / 2} y={height - 6} textAnchor="middle" className="tick">
                     {it.label}
@@ -65,9 +69,10 @@ export default function Columns({ items, series, height = 200, format = String }
       {h && (
         <Tooltip
           mark="rect"
-          left={clampTooltip(M.l + hover * slot + slot / 2, width, 80)}
+          left={clampTooltip(M.l + hover * slot + slot / 2, width, h.note ? 130 : 80)}
           title={h.title ?? h.label}
           rows={[...series].reverse().map((s) => ({ key: s.key, color: s.color, value: format(h.values[s.key] ?? 0), label: s.label }))}
+          note={h.note}
         />
       )}
     </div>

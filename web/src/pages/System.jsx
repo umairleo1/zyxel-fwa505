@@ -3,7 +3,8 @@ import { api } from '../api/client.js';
 import { useAsync, useRouterData } from '../hooks/index.js';
 import { useLive } from '../app/live.js';
 import { formatDuration, formatFull } from '../lib/format.js';
-import { DataTable, KV, PageHeader, Panel, Stat, Uptime } from '../components/ui/index.js';
+import { OUTAGE_KINDS } from '../lib/timeline.js';
+import { DataTable, KV, PageHeader, Panel, Stat, Uptime, PageLoader } from '../components/ui/index.js';
 import { SERIES as SERIES_BY_ID, rangeOptions } from '../lib/domain.js';
 import Segmented from '../components/ui/Segmented.jsx';
 import TimeSeries from '../components/charts/TimeSeries.jsx';
@@ -33,6 +34,7 @@ export default function System() {
 
   return (
     <div className="page">
+      {!sys.data && sys.loading && <PageLoader />}
       <PageHeader title="System" subtitle="Router health, load, reboots and interfaces.">
         <Segmented options={rangeOptions()} value={span} onChange={setSpan} label="Range" />
       </PageHeader>
@@ -75,6 +77,7 @@ export default function System() {
           yMax={100}
           gapMs={5 * 60e3}
           empty="Collecting — samples appear once a minute."
+          coverage={sys.data?.coverage}
         />
       </Panel>
 
@@ -111,14 +114,29 @@ export default function System() {
             ]}
           />
         </Panel>
-        <Panel title="Outages" subtitle="Periods the router didn't answer Insight" flush>
+        <Panel title="Outages" subtitle="The router didn't answer Insight, or answered without mobile data" flush>
           <DataTable
             rows={sys.data?.outages ?? []}
-            rowKey={(o) => o.start_ts}
+            rowKey={(o) => `${o.kind}-${o.start_ts}`}
             empty="No outages in this range."
             columns={[
               { key: 'start_ts', label: 'From', render: (o) => formatFull(o.start_ts) },
-              { key: 'dur', label: 'Duration', align: 'right', render: (o) => formatDuration((o.end_ts - o.start_ts) / 1000) },
+              {
+                key: 'kind',
+                label: 'What was down',
+                render: (o) => (
+                  <span className={o.kind === 'wan' ? 'tone-warning' : 'tone-critical'} title={OUTAGE_KINDS[o.kind]?.detail}>
+                    {OUTAGE_KINDS[o.kind]?.label ?? o.kind}
+                  </span>
+                ),
+              },
+              {
+                key: 'dur',
+                label: 'Duration',
+                align: 'right',
+                render: (o) =>
+                  o.ongoing ? `${formatDuration((o.end_ts - o.start_ts) / 1000)} so far` : formatDuration((o.end_ts - o.start_ts) / 1000),
+              },
               { key: 'reason', label: 'Cause' },
             ]}
           />

@@ -3,8 +3,8 @@ import { api } from '../api/client.js';
 import { useAsync, useRouterData } from '../hooks/index.js';
 import { useLive } from '../app/live.js';
 import { formatBps, formatBytes, formatFull, formatDayMonth } from '../lib/format.js';
-import { usageToday } from '../lib/traffic.js';
-import { DataTable, PageHeader, Panel, Stat } from '../components/ui/index.js';
+import { FULL_DAY_SHARE, dayCoverage, usageToday } from '../lib/traffic.js';
+import { DataTable, PageHeader, Panel, Stat, PageLoader } from '../components/ui/index.js';
 import { SERIES as SERIES_BY_ID, rangeOptions } from '../lib/domain.js';
 import Segmented from '../components/ui/Segmented.jsx';
 import TimeSeries from '../components/charts/TimeSeries.jsx';
@@ -29,9 +29,24 @@ export default function Traffic() {
   const ifaces = (ts?.ipIface ?? []).map((i, k) => ({ ...i, st: ts.ipIfaceSt?.[k] ?? {} }));
   const ports = (ts?.ethIface ?? []).map((i, k) => ({ ...i, st: ts.ethIfaceSt?.[k] ?? {} })).filter((p) => p.Status !== 'NotPresent');
   const latest = d?.series?.at(-1);
+  const days = (week.data?.days ?? []).map((x) => {
+    const c = dayCoverage(x.day, week.data.coverage, { windowFrom: week.data.from, now: week.data.to });
+    const partial = c && c.share < FULL_DAY_SHARE;
+    return {
+      key: x.day,
+      label: formatDayMonth(x.day),
+      title: new Date(x.day).toDateString(),
+      values: { rx: x.rx, tx: x.tx },
+      flag: partial,
+      // Bytes are still counted across a gap (the counters keep running); they land on the day sampling resumed.
+      note: partial ? `Monitored ${c.watchedH} of ${c.totalH} h. Data used while unwatched is counted when sampling resumes.` : null,
+    };
+  });
+  const partlyWatched = days.some((x) => x.flag);
 
   return (
     <div className="page">
+      {!t.data && t.loading && <PageLoader />}
       <PageHeader title="Traffic" subtitle="Throughput and data usage computed from the router's interface counters (sampled every 30 s).">
         <Segmented options={rangeOptions()} value={span} onChange={setSpan} label="Range" />
       </PageHeader>
@@ -72,22 +87,27 @@ export default function Traffic() {
           area
           gapMs={Math.max(3 * (d?.bucketMs ?? 60e3), 5 * 60e3)}
           empty="Collecting — throughput appears after the first two samples (≈1 min)."
+          coverage={d?.coverage}
         />
       </Panel>
 
-      <Panel title="Daily usage" subtitle="Last 14 days (local time)" actions={<Legend series={DAY_SERIES} kind="rect" />} flush>
+      <Panel
+        title="Daily usage"
+        subtitle={
+          <>
+            Last 14 days (local time)
+            {partlyWatched && (
+              <span>
+                <span className="col-flag-key" aria-hidden="true" /> partly monitored
+              </span>
+            )}
+          </>
+        }
+        actions={<Legend series={DAY_SERIES} kind="rect" />}
+        flush
+      >
         {week.data?.days?.length ? (
-          <Columns
-            items={week.data.days.map((x) => ({
-              key: x.day,
-              label: formatDayMonth(x.day),
-              title: new Date(x.day).toDateString(),
-              values: { rx: x.rx, tx: x.tx },
-            }))}
-            series={DAY_SERIES}
-            format={(v) => formatBytes(v, 0)}
-            height={200}
-          />
+          <Columns items={days} series={DAY_SERIES} format={(v) => formatBytes(v, 0)} height={200} />
         ) : (
           <p className="empty-inline panel-body">No usage recorded yet.</p>
         )}

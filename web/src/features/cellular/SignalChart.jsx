@@ -30,7 +30,7 @@ export default function SignalChart({ metrics, range, signal, loading }) {
         {points.length < 2 ? (
           <div className="chart-empty static">Signal history builds up as Insight reads the router.</div>
         ) : (
-          PANELS.map((p) => (
+          PANELS.map((p, i) => (
             <div key={p.metric} className="signal-panel">
               <div className="signal-title">
                 <b>{p.title}</b>{' '}
@@ -49,6 +49,9 @@ export default function SignalChart({ metrics, range, signal, loading }) {
                 hoverT={hoverT}
                 onHoverT={setHoverT}
                 ariaLabel={`${p.title} over time`}
+                coverage={metrics?.coverage}
+                // Name the bands once; the second panel lines up under the first.
+                coverageLabels={i === 0}
               />
             </div>
           ))

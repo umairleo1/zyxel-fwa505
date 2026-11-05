@@ -9,6 +9,30 @@ export function topRounded(x, y, w, h, r = 4) {
 /** Gap between stacked segments, in px. */
 export const SEGMENT_GAP = 2;
 
+/**
+ * Path for one series of `points` ({ t, [key]: number | null }), broken across gaps
+ * longer than `gapMs` instead of interpolating. With `baseY`, each run is closed down
+ * to that y as an area. x and y map time and value to pixels.
+ */
+export function linePath(points, key, { x, y, gapMs, baseY = null }) {
+  let d = '';
+  let prevT = null;
+  let segStartX = null;
+  const close = () => (baseY != null && prevT != null ? `L${x(prevT)},${baseY}L${segStartX},${baseY}Z` : '');
+  for (const p of points) {
+    const v = p[key];
+    if (v == null || !Number.isFinite(v)) continue;
+    const brk = prevT == null || p.t - prevT > gapMs;
+    if (brk) {
+      d += close();
+      segStartX = x(p.t);
+    }
+    d += `${brk ? 'M' : 'L'}${x(p.t).toFixed(1)},${y(v).toFixed(1)}`;
+    prevT = p.t;
+  }
+  return d + close();
+}
+
 /** Keep a centred tooltip of ~180px inside the chart width. */
 export const clampTooltip = (x, width, half = 90) => Math.min(Math.max(x, half), width - half);
 

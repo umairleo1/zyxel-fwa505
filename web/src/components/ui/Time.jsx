@@ -22,5 +22,6 @@ export function When({ ts, seconds = false, className = '' }) {
 export function Uptime({ router }) {
   const now = useNow(router?.uptimeSec != null ? 1000 : null);
   if (router?.uptimeSec == null) return formatDuration(null);
-  return <span className="tabular">{formatDuration(router.uptimeSec + (now - router.fetchedAt) / 1000)}</span>;
+  // With seconds: it ticks every second anyway, so the last unit is worth showing.
+  return <span className="tabular">{formatDuration(router.uptimeSec + (now - router.fetchedAt) / 1000, { seconds: true })}</span>;
 }

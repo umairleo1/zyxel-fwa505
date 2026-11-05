@@ -6,14 +6,16 @@ export const formatCompact = (n) => (n == null ? '—' : n < 10000 ? nf.format(n
 // Proper minus sign for negative readings like RSRP.
 export const formatSigned = (n) => (n == null ? '—' : String(n).replace('-', '−'));
 
-export function formatDuration(sec) {
+/** "2d 0h 22m"; `seconds` adds them at every size ("2d 0h 22m 15s"), for live counters. */
+export function formatDuration(sec, { seconds = false } = {}) {
   if (sec == null || Number.isNaN(sec)) return '—';
   sec = Math.max(0, Math.floor(sec));
   const d = Math.floor(sec / 86400);
   const h = Math.floor((sec % 86400) / 3600);
   const m = Math.floor((sec % 3600) / 60);
-  if (d) return `${d}d ${h}h`;
-  if (h) return `${h}h ${m}m`;
+  const s = seconds ? ` ${sec % 60}s` : '';
+  if (d) return `${d}d ${h}h ${m}m${s}`;
+  if (h) return `${h}h ${m}m${s}`;
   if (m) return `${m}m ${sec % 60}s`;
   return `${sec}s`;
 }
@@ -81,6 +83,14 @@ export function formatSpan(from, to) {
   return isSameDay(from, to)
     ? `${dayMonth.format(from)} ${hm.format(from)}–${hm.format(to)}`
     : `${dayMonth.format(from)} ${hm.format(from)} – ${dayMonth.format(to)} ${hm.format(to)}`;
+}
+
+/** Bucket width for a subtitle: "5 min", "2 h", "1 d". */
+export function formatBucket(ms) {
+  const m = ms / 60e3;
+  if (m < 60) return `${m} min`;
+  if (m < 1440) return `${m / 60} h`;
+  return `${m / 1440} d`;
 }
 
 /** Round tick values for an axis. */

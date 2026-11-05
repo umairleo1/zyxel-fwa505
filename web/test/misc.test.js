@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 process.env.TZ = 'Europe/London';
-const { usageToday } = await import('../src/lib/traffic.js');
+const { dayCoverage, usageToday } = await import('../src/lib/traffic.js');
 const { seriesSummary } = await import('../src/components/charts/svg.js');
 
 test('usageToday is zero until today has a sample', () => {
@@ -12,6 +12,23 @@ test('usageToday is zero until today has a sample', () => {
   assert.deepEqual(usageToday([yesterday], now), { day: now, rx: 0, tx: 0 });
   assert.equal(usageToday([yesterday, today], now), today);
   assert.deepEqual(usageToday([], now), { day: now, rx: 0, tx: 0 });
+});
+
+test('dayCoverage: hours of a local day Insight watched', () => {
+  const day = Date.UTC(2026, 10, 3); // midnight in London (GMT in November)
+  const h = 3600e3;
+  const coverage = { unmonitored: [{ start: day - 2 * h, end: day + 7 * h }], outages: [{ start: day + 12 * h, end: day + 13 * h }] };
+  const near = (c, watchedH, totalH) => {
+    assert.deepEqual([c.watchedH, c.totalH], [watchedH, totalH]);
+    assert.ok(Math.abs(c.share - watchedH / totalH) < 1e-9);
+  };
+  near(dayCoverage(day, coverage, { now: day + 48 * h }), 16, 24);
+  // Today so far: judged up to now only.
+  near(dayCoverage(day, coverage, { now: day + 10 * h }), 3, 10);
+  // Before the fetched window nothing is known, so it isn't counted either way.
+  assert.equal(dayCoverage(day, coverage, { windowFrom: day + 6 * h, now: day + 48 * h }).totalH, 18);
+  assert.equal(dayCoverage(day, coverage, { windowFrom: day + 30 * h, now: day + 48 * h }), null);
+  assert.equal(dayCoverage(day, null, { now: day + 48 * h }).share, 1);
 });
 
 test('seriesSummary gives latest/min/max per series', () => {

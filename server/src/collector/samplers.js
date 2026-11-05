@@ -110,7 +110,11 @@ export function startSamplers({ routerData, db, log = console, emit = () => {}, 
 
     if (stations.data.length) db.insertStations(now, stations.data);
     if (events.length) db.insertMany(events.map((e) => ({ ts: now, source: 'insight', facility: 'devices', ...e })));
-    if (firstRun) db.setMeta('devicesSeeded', '1');
+    if (firstRun) {
+      db.setMeta('devicesSeeded', '1');
+      // Devices already there when Insight first looked aren't "new" (see insights/summary.js).
+      db.setMeta('devicesSeededAt', now);
+    }
     emit('devices');
   }
 

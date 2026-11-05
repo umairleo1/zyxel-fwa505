@@ -1,8 +1,10 @@
 import { useRef, useState } from 'react';
 import { useElementWidth } from '../../hooks/index.js';
-import { formatFull, niceTicks, timeTicks } from '../../lib/format.js';
+import { formatDuration, formatFull, formatSpan, niceTicks, timeTicks } from '../../lib/format.js';
 import Tooltip from './Tooltip.jsx';
-import { clampTooltip, seriesSummary } from './svg.js';
+import CoverageBands from './CoverageBands.jsx';
+import { OUTAGE_KINDS, UNMONITORED, spanAt } from '../../lib/timeline.js';
+import { clampTooltip, linePath, seriesSummary } from './svg.js';
 
 const M = { t: 10, r: 56, b: 22, l: 52 };
 const LABEL_MIN_GAP = 12; // px between end labels before one is dropped
@@ -11,7 +13,10 @@ const LABEL_MIN_GAP = 12; // px between end labels before one is dropped
  * Multi-series line chart over time with a crosshair tooltip.
  * - series: [{ key, label, color }]; points: [{ t, [key]: number | null }]
  * - Lines break across gaps longer than `gapMs` instead of interpolating.
- * - Hover can be controlled (`hoverT` + `onHoverT`) to sync several charts.
+ * - Hover can be controlled (`hoverT` + `onHoverT`) to sync several charts. It's the
+ *   pointer's time; each chart snaps to its own nearest point, never across a gap.
+ * - `coverage` ({ unmonitored, outages } from the API) shades why lines break;
+ *   `coverageLabels` names the bands inside them (off for all but one small multiple).
  */
 export default function TimeSeries({
   points,
@@ -28,6 +33,8 @@ export default function TimeSeries({
   hoverT: controlledT,
   onHoverT,
   ariaLabel,
+  coverage,
+  coverageLabels = true,
 }) {
   const [ref, width] = useElementWidth();
   const [localT, setLocalT] = useState(null);
@@ -47,36 +54,31 @@ export default function TimeSeries({
   const { ticks: xTicks, label: xLabel } = timeTicks(from, to, Math.max(2, Math.floor(iw / 90)));
 
   /** Line path (or closed area) for one series, broken at gaps. */
-  const path = (key, closed) => {
-    let d = '';
-    let prevT = null;
-    let segStartX = null;
-    const close = () => (closed && prevT != null ? `L${x(prevT)},${y(y0)}L${segStartX},${y(y0)}Z` : '');
-    for (const p of points) {
-      const v = p[key];
-      if (v == null || !Number.isFinite(v)) continue;
-      const brk = prevT == null || p.t - prevT > gapMs;
-      if (brk) {
-        d += close();
-        segStartX = x(p.t);
-      }
-      d += `${brk ? 'M' : 'L'}${x(p.t).toFixed(1)},${y(v).toFixed(1)}`;
-      prevT = p.t;
-    }
-    return d + close();
-  };
+  const path = (key, closed) => linePath(points, key, { x, y, gapMs, baseY: closed ? y(y0) : null });
 
+  // Nearest point, but only within the line-break distance: across a gap it would show
+  // readings from far away as if they were where the pointer is.
   const nearest = (t) => {
     let best = null;
     for (const p of points) if (best == null || Math.abs(p.t - t) < Math.abs(best.t - t)) best = p;
-    return best;
+    return best && Math.abs(best.t - t) <= gapMs ? best : null;
   };
   const onMove = (e) => {
     if (!points.length || !svgRef.current) return;
     const r = svgRef.current.getBoundingClientRect();
-    setHoverT(nearest(from + ((e.clientX - r.left - M.l) / iw) * (to - from))?.t ?? null);
+    setHoverT(Math.max(from, Math.min(to, from + ((e.clientX - r.left - M.l) / iw) * (to - from))));
   };
-  const hp = hoverT != null ? points.find((p) => p.t === hoverT) : null;
+  // Inside a band, the band is the answer; elsewhere, the readings nearest the pointer.
+  const band =
+    hoverT == null
+      ? null
+      : (() => {
+          const out = spanAt(coverage?.outages ?? [], hoverT);
+          if (out) return { ...out, color: 'var(--critical)', label: OUTAGE_KINDS.router.label, note: out.reason };
+          const gap = spanAt(coverage?.unmonitored ?? [], hoverT);
+          return gap && { ...gap, color: 'var(--muted)', label: UNMONITORED.label, note: "Insight wasn't collecting" };
+        })();
+  const hp = hoverT != null && !band ? nearest(hoverT) : null;
 
   // Latest value per series, labelled at the line end; drop labels that would overlap.
   const ends = [];
@@ -91,7 +93,8 @@ export default function TimeSeries({
     return (
       <div className="chart" ref={ref}>
         <div className="chart-empty static" style={{ minHeight: height }}>
-          {empty}
+          {/* "Collecting…" would be wrong when the range simply wasn't watched. */}
+          {coverage?.unmonitored?.length ? `${UNMONITORED.label} in this range. ${UNMONITORED.detail}.` : empty}
         </div>
       </div>
     );
@@ -108,7 +111,7 @@ export default function TimeSeries({
           onPointerMove={onMove}
           onPointerLeave={() => setHoverT(null)}
           role="img"
-          aria-label={`${ariaLabel ?? series.map((s) => s.label).join(', ')} — ${seriesSummary(points, series, format)}`}
+          aria-label={`${ariaLabel ?? series.map((s) => s.label).join(', ')} — ${seriesSummary(points, series, format)}${coverageSummary(coverage)}`}
         >
           {ticks.map((t) => (
             <g key={t}>
@@ -123,6 +126,16 @@ export default function TimeSeries({
               {xLabel(t)}
             </text>
           ))}
+          <CoverageBands
+            unmonitored={coverage?.unmonitored}
+            outages={coverage?.outages}
+            x={x}
+            left={M.l}
+            right={M.l + iw}
+            top={M.t}
+            height={ih}
+            labels={coverageLabels}
+          />
           {area && series.map((s) => <path key={`a-${s.key}`} d={path(s.key, true)} fill={s.color} opacity="0.1" />)}
           {series.map((s) => (
             <path key={s.key} d={path(s.key)} fill="none" stroke={s.color} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
@@ -156,6 +169,23 @@ export default function TimeSeries({
           rows={series.map((s) => ({ key: s.key, color: s.color, value: hp[s.key] == null ? '—' : format(hp[s.key]), label: s.label }))}
         />
       )}
+      {band && (
+        <Tooltip
+          left={clampTooltip(x(hoverT), width)}
+          title={formatSpan(band.start, band.end)}
+          rows={[{ key: 'band', color: band.color, value: formatDuration((band.end - band.start) / 1000), label: band.label }]}
+          note={band.note}
+        />
+      )}
     </div>
   );
+}
+
+/** "; not monitored for 7h 10m, router unreachable for 3m" for screen readers, or nothing. */
+function coverageSummary(coverage) {
+  const total = (spans = []) => spans.reduce((a, s) => a + s.end - s.start, 0) / 1000;
+  const parts = [];
+  if (coverage?.unmonitored?.length) parts.push(`not monitored for ${formatDuration(total(coverage.unmonitored))}`);
+  if (coverage?.outages?.length) parts.push(`router unreachable for ${formatDuration(total(coverage.outages))}`);
+  return parts.length ? `; ${parts.join(', ')}` : '';
 }
