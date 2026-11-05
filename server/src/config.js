@@ -30,6 +30,12 @@ export const config = {
   httpPort: num(env.PORT, 4400),
   // HTTP Basic password for the dashboard (any username). Required when HOST is not loopback.
   dashboardPassword: env.DASHBOARD_PASSWORD || '',
+  // The Messages tab reads, sends and deletes SMS on the router's SIM: the one place
+  // Insight writes to the router. SMS_ENABLED=false makes Insight fully read-only again.
+  smsEnabled: !/^(0|false|no|off)$/i.test(env.SMS_ENABLED ?? ''),
+  // The Radio page changes the router's preferred network mode and bands (cellwan_band),
+  // always as a trial that reverts unless kept. RADIO_CONTROL_ENABLED=false turns it off.
+  radioControlEnabled: !/^(0|false|no|off)$/i.test(env.RADIO_CONTROL_ENABLED ?? ''),
   // Extra names the dashboard may be reached by (reverse proxy, DNS name), on top of
   // localhost, this machine's addresses and hostname.
   allowedHosts: csv(env.ALLOWED_HOSTS),

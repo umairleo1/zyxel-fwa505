@@ -7,7 +7,8 @@ import { Router, X } from '../ui/Icons.jsx';
 // Matches the breakpoint in shell.css where the sidebar becomes off-canvas.
 const OFF_CANVAS = '(max-width: 960px)';
 
-export default function Sidebar({ route, open, onClose, device }) {
+/** features: status flags for `requires` (e.g. smsEnabled); badges: { [item id]: count } shown when above 0. */
+export default function Sidebar({ route, open, onClose, device, features = {}, badges = {} }) {
   const offCanvas = useMediaQuery(OFF_CANVAS);
   const closeRef = useRef(null);
   const navRef = useRef(null);
@@ -62,22 +63,29 @@ export default function Sidebar({ route, open, onClose, device }) {
                 {g.group}
                 {g.note && <span className="nav-note">{g.note}</span>}
               </div>
-              {g.items.map((it) => {
-                const Icon = it.icon;
-                const active = route === it.id;
-                return (
-                  <Link
-                    key={it.id}
-                    to={href(it.id)}
-                    className={`nav-item ${active ? 'is-active' : ''}`}
-                    aria-current={active ? 'page' : undefined}
-                    onClick={onClose}
-                  >
-                    <Icon size={16} />
-                    <span>{it.label}</span>
-                  </Link>
-                );
-              })}
+              {g.items
+                .filter((it) => !it.requires || features[it.requires])
+                .map((it) => {
+                  const Icon = it.icon;
+                  const active = route === it.id;
+                  return (
+                    <Link
+                      key={it.id}
+                      to={href(it.id)}
+                      className={`nav-item ${active ? 'is-active' : ''}`}
+                      aria-current={active ? 'page' : undefined}
+                      onClick={onClose}
+                    >
+                      <Icon size={16} />
+                      <span>{it.label}</span>
+                      {badges[it.id] > 0 && (
+                        <span className="nav-badge" aria-label={`${badges[it.id]} unread`}>
+                          {badges[it.id] > 99 ? '99+' : badges[it.id]}
+                        </span>
+                      )}
+                    </Link>
+                  );
+                })}
             </div>
           ))}
         </div>

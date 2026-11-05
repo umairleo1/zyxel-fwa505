@@ -15,7 +15,10 @@ export function createRouterData({ client, collector, liveTtlMs = 15_000, config
   const inflight = new Map();
   // Every successful router read (collector, samplers, pages) lands in one cache,
   // so a page asking for `status` right after the collector polled it costs nothing.
-  client.onResponse = (path, raw) => cache.set(path, { at: Date.now(), raw });
+  // Messages stay out of the cache: only the SMS service reads them, and only when asked.
+  client.onResponse = (path, raw) => {
+    if (!path.includes('oid=cellwan_sms')) cache.set(path, { at: Date.now(), raw });
+  };
   const ttlFor = (id) => (LIVE_IDS.has(id) ? liveTtlMs : configTtlMs);
 
   // Own keys only: "constructor" or "toString" must not resolve to a catalog entry.

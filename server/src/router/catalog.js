@@ -1,7 +1,8 @@
 // Read-only endpoints Insight may request, mapped from the router's own UI
 // (FWA505 V1.71). Anything that triggers work on a GET is deliberately absent:
 // cellular/PLMN scans, ping/iperf/OAM tests, azimuth calibration, backups,
-// online firmware checks, SMS (reading marks messages read).
+// online firmware checks. SMS isn't here either: only the Messages tab reads it
+// (sms/service.js), never this generic passthrough.
 
 const DAL_IDS = `status cardpage_status cellwan_status cellwan_sim cellular cellwan cellwan_band cellwan_lock cellwan_nr_lock
   cellwan_mgmt cellwan_mapn cellwan_psru cellwan_esim cellwan_esim_profile lanhosts Traffic_Status VOIP_Status wlan wps wmm

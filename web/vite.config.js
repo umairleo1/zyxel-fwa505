@@ -8,7 +8,9 @@ export default defineConfig(({ mode }) => {
     plugins: [react()],
     server: {
       port: 5173,
-      proxy: { '/api': `http://127.0.0.1:${env.PORT || 4400}` },
+      // Keep the browser's Host header: the server's CSRF guard compares it with Origin,
+      // and the shorthand form (changeOrigin: true) makes every POST look cross-site.
+      proxy: { '/api': { target: `http://127.0.0.1:${env.PORT || 4400}`, changeOrigin: false } },
     },
   };
 });

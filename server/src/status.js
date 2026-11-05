@@ -20,12 +20,18 @@ export function lanIp(routerUrl) {
 }
 
 /** Snapshot of everything the UI's health indicators need. */
-export function createStatus({ config, collector, syslog, snmp, client }) {
+export function createStatus({ config, collector, syslog, snmp, client, sms, radio }) {
   return () => ({
     routerUrl: config.routerUrl,
     lanIp: lanIp(config.routerUrl),
     pollIntervalSec: config.pollIntervalSec,
     statusIntervalSec: config.statusIntervalSec,
+    smsEnabled: config.smsEnabled,
+    // Unread texts on the SIM (null until first checked): the sidebar badge.
+    smsUnread: config.smsEnabled ? (sms?.unread ?? null) : null,
+    radioEnabled: config.radioControlEnabled,
+    // A band selection on trial: { until } (it reverts then unless kept), or null.
+    radioTrial: config.radioControlEnabled ? (radio?.trial ?? null) : null,
     collector: publicCollectorState(collector.state),
     syslog: syslog.state,
     snmp: snmp.state,

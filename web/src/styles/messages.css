@@ -1,0 +1,755 @@
+/* ───────────────────────── Messages (SMS) ───────────────────────── */
+/* Full height: the page fills the window under the top bar, the chat takes what's left. */
+.main:has(.sms-page) {
+  display: flex;
+  flex-direction: column;
+  height: calc(100dvh - var(--header-h));
+  padding-bottom: 16px;
+}
+.sms-page {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+.sms {
+  --sms-bubble-in: var(--surface-2);
+  --sms-bubble-out: var(--accent);
+  --sms-radius: 18px;
+  display: grid;
+  grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
+  gap: 12px;
+  flex: 1;
+  min-height: 360px;
+}
+.sms.is-one-pane {
+  grid-template-columns: minmax(0, 1fr);
+}
+.sms > .panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* SIM capacity in the page header */
+.sms-meter {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.sms-meter-bar {
+  width: 56px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--border);
+  overflow: hidden;
+}
+.sms-meter-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.3s ease;
+}
+.sms-meter.is-high .sms-meter-bar > span {
+  background: var(--warning);
+}
+.sms-meter.is-full {
+  color: var(--critical-text);
+}
+.sms-meter.is-full .sms-meter-bar > span {
+  background: var(--critical);
+}
+
+/* ── Conversation list ── */
+.sms-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin: 10px 10px 4px;
+  color: var(--muted);
+}
+.sms-search svg {
+  position: absolute;
+  left: 10px;
+  pointer-events: none;
+}
+.sms-search input {
+  width: 100%;
+  height: 34px;
+  padding: 0 10px 0 32px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
+}
+.sms-search input:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: var(--surface);
+  box-shadow: 0 0 0 3px var(--accent-wash);
+}
+.sms-list-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 6px 8px;
+}
+.sms-list-scroll ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.sms-empty-list {
+  margin: 24px 12px;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+}
+.sms-row {
+  position: relative;
+}
+.sms-row-open {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  padding: 10px 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.sms-row-open:hover {
+  background: var(--surface-hover);
+}
+.sms-row.is-active .sms-row-open {
+  background: var(--accent-wash);
+}
+.sms-row-open:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+.sms-row-body {
+  display: grid;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+.sms-row-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.sms-row-name {
+  overflow: hidden;
+  font-size: 13.5px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sms-row-time {
+  flex: none;
+  color: var(--muted);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  transition: opacity 0.15s;
+}
+.sms-row-preview {
+  overflow: hidden;
+  padding-right: 22px;
+  color: var(--text-2);
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sms-you {
+  color: var(--muted);
+}
+.sms-row.is-unread .sms-row-name,
+.sms-row.is-unread .sms-row-preview {
+  color: var(--text);
+  font-weight: 650;
+}
+.sms-row.is-unread .sms-row-time {
+  color: var(--accent);
+  font-weight: 600;
+}
+.sms-unread {
+  position: absolute;
+  right: 14px;
+  bottom: 12px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 18px;
+  text-align: center;
+}
+/* Delete sits where the time is: revealed on hover or focus, always there on touch. */
+.sms-row-actions {
+  position: absolute;
+  top: 50%;
+  right: 12px;
+  transform: translateY(-50%);
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.sms-row:hover .sms-row-actions,
+.sms-row:focus-within .sms-row-actions {
+  opacity: 1;
+}
+.sms-row:hover .sms-row-time,
+.sms-row:focus-within .sms-row-time,
+.sms-row:hover .sms-unread,
+.sms-row:focus-within .sms-unread {
+  opacity: 0;
+}
+.sms-row:hover .sms-row-body,
+.sms-row:focus-within .sms-row-body {
+  padding-right: 34px; /* the text stays clear of the round button */
+}
+/* Round delete on a conversation: quiet until hovered, red when it means it. */
+.sms-delete.is-round {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--muted);
+  box-shadow: var(--shadow);
+  transition:
+    background 0.15s,
+    color 0.15s,
+    border-color 0.15s,
+    transform 0.12s;
+}
+.sms-delete.is-round:hover:not(:disabled) {
+  border-color: var(--critical);
+  background: var(--critical-wash);
+  color: var(--critical);
+}
+.sms-delete.is-round:active {
+  transform: scale(0.92);
+}
+.sms-confirm.is-round {
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 15px;
+  box-shadow: var(--shadow);
+  font-size: 12px;
+  animation: confirm-in 0.15s ease-out;
+}
+@keyframes confirm-in {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+}
+@media (hover: none) {
+  .sms-row-actions {
+    position: static;
+    opacity: 1;
+    align-self: center;
+    transform: none;
+    margin-right: 6px;
+  }
+  .sms-row:hover .sms-row-body {
+    padding-right: 0;
+  }
+  .sms-row {
+    display: flex;
+    align-items: center;
+  }
+  .sms-row .sms-row-time {
+    opacity: 1 !important;
+  }
+}
+
+/* Avatars */
+.sms-avatar {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: var(--accent-wash);
+  color: var(--accent);
+  font-size: 15px;
+  font-weight: 650;
+}
+.sms-avatar.is-named {
+  background: var(--surface-2);
+  color: var(--text-2);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+/* ── Conversation ── */
+.sms-view-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 11px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.sms-view-title {
+  flex: 1;
+  min-width: 0;
+}
+.sms-view-title h2 {
+  margin: 0;
+  overflow: hidden;
+  font-size: 15px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sms-view-title p {
+  margin: 1px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+/* Round close (✕) for the new-message view */
+.sms-close {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    color 0.15s;
+}
+.sms-close:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+.sms-close:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.sms-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px 18px 14px;
+  overflow-anchor: none; /* we decide when to follow new messages (see Thread) */
+}
+.sms-day-label {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin: 10px 0 6px;
+  text-align: center;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+.sms-day-label span {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface) 85%, transparent);
+  backdrop-filter: blur(6px);
+  color: var(--muted);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+.sms-bubbles {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.sms-bubble {
+  position: relative;
+  max-width: min(72%, 560px);
+  padding: 8px 12px 6px;
+  border-radius: var(--sms-radius);
+  background: var(--sms-bubble-in);
+}
+/* Only what's new animates: a refresh or re-render never makes the thread jump. */
+.sms-bubble.is-fresh {
+  animation: bubble-in 0.18s ease-out;
+}
+.sms-bubble.is-in {
+  align-self: flex-start;
+  border-bottom-left-radius: 6px;
+}
+.sms-bubble.is-out {
+  align-self: flex-end;
+  border-bottom-right-radius: 6px;
+  background: var(--sms-bubble-out);
+  color: var(--accent-ink);
+}
+/* Consecutive messages close together read as one group. */
+.sms-bubble.is-grouped {
+  margin-top: -5px;
+}
+.sms-bubble.is-in.is-grouped {
+  border-top-left-radius: 6px;
+}
+.sms-bubble.is-out.is-grouped {
+  border-top-right-radius: 6px;
+}
+.sms-bubble.is-sending {
+  opacity: 0.7;
+}
+.sms-bubble.is-failed {
+  background: var(--critical-wash);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px var(--critical);
+}
+@keyframes bubble-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sms-bubble.is-fresh {
+    animation: none;
+  }
+}
+.sms-text {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 14px;
+  line-height: 1.42;
+  white-space: pre-wrap;
+}
+.sms-meta {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-height: 18px;
+  margin-top: 2px;
+  font-size: 11px;
+  opacity: 0.72;
+  font-variant-numeric: tabular-nums;
+}
+.sms-bubble .sms-delete {
+  color: inherit;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.sms-bubble:hover .sms-delete,
+.sms-bubble:focus-within .sms-delete {
+  opacity: 1;
+}
+@media (hover: none) {
+  .sms-bubble .sms-delete {
+    opacity: 0.8;
+  }
+}
+.sms-delete.is-small,
+.sms-confirm.is-small {
+  width: auto;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 5px;
+  border-radius: 7px;
+  font-size: 11.5px;
+}
+.sms-confirm {
+  border-color: var(--critical);
+  background: var(--critical);
+  color: #fff;
+  font-weight: 600;
+}
+.sms-confirm:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--critical) 88%, #000);
+}
+.sms-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-weight: 650;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.sms-noreply {
+  flex: none;
+  margin: 0;
+  padding: 14px 18px;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 12.5px;
+  text-align: center;
+}
+
+/* ── Composer: grows from one line to COMPOSE_MAX_PX, then scrolls ── */
+.sms-composer {
+  flex: none;
+  padding: 10px 14px 10px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+.sms-composer-box {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  padding: 4px 4px 4px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 22px;
+  background: var(--surface);
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
+}
+.sms-composer-box:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-wash);
+}
+.sms-composer textarea {
+  flex: 1;
+  min-height: 44px;
+  max-height: 180px;
+  padding: 11px 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  line-height: 22px;
+  resize: none;
+  outline: none;
+}
+.sms-composer textarea::placeholder {
+  color: var(--muted);
+}
+.sms-send {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  margin-bottom: 4px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-ink);
+  cursor: pointer;
+  transition:
+    transform 0.12s,
+    background 0.15s,
+    opacity 0.15s;
+}
+.sms-send:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 88%, var(--text));
+}
+.sms-send:active:not(:disabled) {
+  transform: scale(0.94);
+}
+.sms-send:disabled {
+  background: var(--surface-2);
+  color: var(--muted);
+  cursor: default;
+}
+.sms-send:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.sms-cost {
+  min-height: 16px;
+  margin: 6px 6px 0;
+  color: var(--muted);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── New message ── */
+.sms-new {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+.sms-to {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+.sms-to label {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+.sms-to input {
+  flex: 1;
+  min-width: 200px;
+  max-width: 320px;
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
+}
+.sms-to input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-wash);
+}
+.sms-to input[aria-invalid='true'] {
+  border-color: var(--warning);
+}
+
+/* Nothing chosen */
+.sms-placeholder {
+  display: grid;
+  flex: 1;
+  place-content: center;
+  justify-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.sms-placeholder p {
+  margin: 0;
+}
+.sms-placeholder-icon {
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: var(--surface-2);
+}
+
+/* Your own number beside the page title */
+.sms-title {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+}
+.sms-own {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 6px 0 12px;
+  border-radius: 14px;
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--border);
+  color: var(--text-2);
+  font-size: 13px;
+  font-weight: 600;
+  vertical-align: middle;
+}
+.sms-own-number {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+}
+.sms-own-tag {
+  padding: 1px 7px;
+  border-radius: 9px;
+  background: var(--good-wash);
+  color: var(--good-text);
+  font-size: 11px;
+  font-weight: 600;
+}
+.sms-own-edit {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    color 0.15s;
+}
+.sms-own-edit:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+.sms-own.is-empty {
+  padding: 0 12px;
+  border: 1px dashed var(--border-strong);
+  background: transparent;
+  box-shadow: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.sms-own.is-empty:hover {
+  border-color: var(--accent);
+  background: var(--accent-wash);
+}
+.sms-own.is-editing {
+  padding: 0 4px 0 4px;
+  background: var(--surface);
+  box-shadow: none;
+}
+.sms-own.is-editing input {
+  width: 170px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--accent);
+  border-radius: 14px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  box-shadow: 0 0 0 3px var(--accent-wash);
+}
+.sms-own.is-editing input:focus {
+  outline: none;
+}
+.sms-own.is-editing input[aria-invalid='true'] {
+  border-color: var(--warning);
+}
+.sms-own.is-editing .btn {
+  height: 28px;
+  border-radius: 14px;
+}
+.sms-close.is-small {
+  width: 26px;
+  height: 26px;
+}

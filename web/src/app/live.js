@@ -7,3 +7,10 @@ import { createContext, useContext } from 'react';
  */
 export const LiveContext = createContext(null);
 export const useLive = () => useContext(LiveContext);
+
+/**
+ * Just the toast function, which never changes: for components that only notify, so
+ * they don't re-render on every status push (about once a second) like useLive does.
+ */
+export const ToastContext = createContext(() => {});
+export const useToast = () => useContext(ToastContext);
