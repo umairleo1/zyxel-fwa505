@@ -33,7 +33,21 @@ export function insightsRoutes({ db, routerData, collector }) {
     const hit = results.get(key);
     if (hit && !fresh && Date.now() - hit.at < RESULT_TTL_MS) return res.json(hit.body);
 
-    const traffic = summarizeTraffic(db.traffic(from - TRAFFIC_PAD_MS, to), { from, to, bucketMs: bucketFor(to - from, 120) });
+    const rows = db.traffic(from - TRAFFIC_PAD_MS, to);
+    const traffic = summarizeTraffic(rows, { from, to, bucketMs: bucketFor(to - from, 120) });
+    // Same samples in 1 h buckets, for the hour-of-day profile.
+    const hourlyTraffic = summarizeTraffic(rows, { from, to, bucketMs: 3600e3 });
+    // This calendar month (local time), for the usage projection.
+    const now = new Date(to);
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+    const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1).getTime();
+    const monthRows = db.traffic(monthStart - TRAFFIC_PAD_MS, to);
+    const month = {
+      totals: summarizeTraffic(monthRows, { from: monthStart, to, bucketMs: 86400e3 }).totals,
+      firstSampleTs: monthRows.find((r) => r.ts >= monthStart)?.ts ?? null,
+      monthStart,
+      monthEnd,
+    };
     const stations = db.latestStations(Date.now() - RECENT_STATIONS_MS).map((s) => ({ mac: s.mac, band: s.band, rssi: s.rssi }));
     const insights = computeInsights({
       db,
@@ -41,8 +55,11 @@ export function insightsRoutes({ db, routerData, collector }) {
       to,
       state: { ...collector.state, rangeDays: (to - from) / 86400e3 },
       traffic,
+      hourlyTraffic,
+      month,
       devices: db.devices(),
       stations,
+      openOutages: collector.openOutages?.() ?? [],
     });
     const body = { ...insights, audit: await currentAudit(fresh) };
     results.delete(key);

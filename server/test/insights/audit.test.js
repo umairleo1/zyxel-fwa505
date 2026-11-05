@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { runAudit } from '../../src/insights/audit.js';
+import { isPublicIpv4, runAudit } from '../../src/insights/audit.js';
 
 // Shapes as returned by an FWA505 (V1.71), trimmed.
 const fixtures = {
@@ -60,4 +60,53 @@ test('audit runs on every captured fixture without throwing', async () => {
   const a = await runAudit(get);
   assert.ok(a.checks.length >= 15, `only ${a.checks.length} checks`);
   assert.ok(a.score > 40);
+});
+
+const wanWith = (ip) => [
+  {
+    WanLanInfo: [{ X_ZYXEL_Type: 'WAN', Status: 'Up', X_ZYXEL_DefaultGatewayIface: true, IPv4Address: [{ IPAddress: ip }] }],
+    FirewallInfo: { X_ZYXEL_DenyPing: false },
+  },
+];
+
+test('carrier-grade NAT is detected and reframes the exposure checks', async () => {
+  const a = await runAudit(async (id) => {
+    if (id === 'status') return wanWith('10.0.0.13');
+    if (id === 'nat') return [{ Description: 'game', InternalClient: '192.168.1.20' }];
+    if (!(id in fixtures)) throw new Error('n/a');
+    return fixtures[id];
+  });
+  const byId = Object.fromEntries(a.checks.map((c) => [c.id, c]));
+  assert.match(byId.cgnat.title, /^Behind carrier-grade NAT \(WAN address 10\.0\.0\.13\)$/);
+  assert.equal(byId.ping.status, 'pass', "pings can't arrive at all");
+  assert.equal(byId.portfwd.status, 'warn', "a port forward behind CGNAT can't work");
+  assert.match(byId['remote-mgmt'].detail, /unreachable from the Internet anyway/);
+});
+
+test('a public WAN address keeps the exposure checks as they are', async () => {
+  const a = await runAudit(async (id) => {
+    if (id === 'status') return wanWith('81.2.69.160');
+    if (!(id in fixtures)) throw new Error('n/a');
+    return fixtures[id];
+  });
+  const byId = Object.fromEntries(a.checks.map((c) => [c.id, c]));
+  assert.match(byId.cgnat.title, /^Public IPv4 address/);
+  assert.equal(byId.ping.status, 'info', 'answers pings, and is reachable');
+});
+
+test('notes never move the security score', async () => {
+  const withNotes = await runAudit(async (id) => {
+    if (!(id in fixtures)) throw new Error('n/a');
+    return fixtures[id];
+  });
+  const counts = withNotes.counts;
+  assert.equal(withNotes.scored, counts.pass + counts.warn + counts.fail);
+  assert.equal(withNotes.score, Math.round(((counts.pass + counts.warn * 0.25) / withNotes.scored) * 100));
+});
+
+test('isPublicIpv4 knows private and carrier-grade NAT ranges', () => {
+  for (const ip of ['10.0.0.13', '100.64.1.1', '100.127.255.254', '172.16.0.1', '172.31.9.9', '192.168.1.1', '0.0.0.0', 'nonsense']) {
+    assert.equal(isPublicIpv4(ip), false, ip);
+  }
+  for (const ip of ['81.2.69.160', '100.63.255.255', '100.128.0.1', '172.32.0.1', '8.8.8.8']) assert.equal(isPublicIpv4(ip), true, ip);
 });

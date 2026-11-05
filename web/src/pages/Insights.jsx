@@ -1,11 +1,15 @@
 import { useState } from 'react';
 import { api } from '../api/client.js';
 import { useAsync } from '../hooks/index.js';
-import { useLive } from '../app/live.js';
-import { formatBytes, formatBps, formatDuration, formatFull, formatSigned } from '../lib/format.js';
-import { PageHeader, Panel, Stat, ErrorNote } from '../components/ui/index.js';
+import { useLive, useToast } from '../app/live.js';
+import { navigate } from '../app/route.jsx';
+import { isNr } from '@zyxel-insight/shared/radio';
+import { formatBytes, formatBps, formatDayMonth, formatDuration, formatFull, formatSigned } from '../lib/format.js';
+import { OUTAGE_KINDS } from '../lib/timeline.js';
+import { PageHeader, Panel, Stat, ErrorNote, PageLoader } from '../components/ui/index.js';
 import Segmented from '../components/ui/Segmented.jsx';
 import { StatusIcon } from '../components/ui/Icons.jsx';
+import HourProfile from '../features/insights/HourProfile.jsx';
 
 const RANGES = [
   { value: 86400e3, label: '24h' },
@@ -77,7 +81,7 @@ function StatsRow({ name, s, unit }) {
 }
 
 export default function Insights() {
-  const { ticks } = useLive();
+  const { status, ticks } = useLive();
   const [span, setSpan] = useState(7 * 86400e3);
   const [fresh, setFresh] = useState(0);
   const tickKey = Math.floor(ticks.data / 5); // every ~5 pushes is plenty for aggregates
@@ -86,10 +90,13 @@ export default function Insights() {
   const audit = d?.audit;
   const rel = d?.reliability;
   const sig = d?.signal;
-  const areas = audit ? [...new Set(audit.checks.map((c) => c.area))] : [];
+  // "Internet" first: whether the router is reachable at all frames every exposure check.
+  const areas = audit ? [...new Set(audit.checks.map((c) => c.area))].sort((a, b) => (b === 'Internet') - (a === 'Internet')) : [];
+  const month = d?.usage?.month;
 
   return (
     <div className="page">
+      {!r.data && r.loading && <PageLoader />}
       <PageHeader
         title="Insights"
         subtitle="What the router doesn't tell you: configuration risks, reliability, signal quality and usage — derived from everything Insight has collected."
@@ -108,7 +115,7 @@ export default function Insights() {
           unit="/100"
           sub={
             audit
-              ? `${audit.counts.fail ?? 0} risks · ${audit.counts.warn ?? 0} to review · ${audit.counts.pass ?? 0} OK`
+              ? `${audit.counts.fail ?? 0} risks · ${audit.counts.warn ?? 0} to review · ${audit.counts.pass ?? 0} OK · notes don't count`
               : 'Running audit…'
           }
         />
@@ -118,7 +125,7 @@ export default function Insights() {
           unit="%"
           sub={
             rel
-              ? `${rel.outages} outage${rel.outages === 1 ? '' : 's'} · ${formatDuration(rel.downtimeSec)} down · monitored ${rel.coveragePct ?? 0}%`
+              ? `${rel.outages} outage${rel.outages === 1 ? '' : 's'}${rel.wanOutages ? ` (${rel.wanOutages} mobile data)` : ''} · ${formatDuration(rel.downtimeSec)} down · watched ${rel.coveragePct ?? 0}%${rel.startedInPeriod ? ` since ${formatDayMonth(rel.monitoredSince)}` : ''}`
               : ''
           }
         />
@@ -127,7 +134,13 @@ export default function Insights() {
           label="Data used"
           value={d?.usage ? formatBytes(d.usage.totals.rx + d.usage.totals.tx) : '—'}
           sub={d?.usage ? `↓ ${formatBytes(d.usage.totals.rx)} · ↑ ${formatBytes(d.usage.totals.tx)}` : ''}
-        />
+        >
+          {month && (
+            <p className="tile-sub">
+              This month <b>{formatBytes(month.used)}</b> · {monthSub(month)}
+            </p>
+          )}
+        </Stat>
       </div>
 
       {d?.recommendations?.length > 0 && (
@@ -140,6 +153,7 @@ export default function Insights() {
                   <p className="rec-title">{rec.title}</p>
                   <p className="rec-detail">{rec.detail}</p>
                   {rec.action && <p className="rec-action">→ {rec.action}</p>}
+                  {rec.tryBand && <TryBand band={rec.tryBand} enabled={!!status?.radioEnabled} />}
                 </div>
               </li>
             ))}
@@ -175,7 +189,9 @@ export default function Insights() {
           <Panel
             title="Signal health"
             subtitle={
-              sig ? `${sig.handovers} cell changes · ${sig.comboChanges} combination changes · ${sig.distinctCells} cells seen` : ''
+              sig
+                ? `${sig.handovers} cell change${sig.handovers === 1 ? '' : 's'} · ${sig.comboChanges} combination change${sig.comboChanges === 1 ? '' : 's'} · ${sig.distinctCells} cell${sig.distinctCells === 1 ? '' : 's'} seen`
+                : ''
             }
           >
             <QualityBar label="LTE strength (RSRP · router bar scale: Good = 4–5 bars, Fair = 3, Poor = 0–2)" dist={sig?.lte.rsrpDist} />
@@ -206,6 +222,10 @@ export default function Insights() {
             )}
           </Panel>
 
+          <Panel title="By hour of day" subtitle="The period folded onto one day: when quality dips and when you use the connection">
+            <HourProfile hourly={d?.hourly} />
+          </Panel>
+
           <Panel title="Band combinations" subtitle="Share of time in each carrier set">
             {sig?.combos?.length ? (
               <ul className="dwell">
@@ -215,7 +235,7 @@ export default function Insights() {
                     <span className="dwell-bar">
                       <span style={{ width: `${c.pct}%` }} />
                     </span>
-                    <b className="dwell-pct">{c.pct}%</b>
+                    <b className="dwell-pct">{c.pct >= 0.1 ? `${c.pct}%` : '<0.1%'}</b>
                   </li>
                 ))}
               </ul>
@@ -236,10 +256,14 @@ export default function Insights() {
                   </li>
                 ))}
                 {rel.recentOutages.map((o) => (
-                  <li key={`o${o.start_ts}`}>
-                    <span className="dot dot-warning" />
-                    <b>Unreachable {formatDuration((o.end_ts - o.start_ts) / 1000)}</b>{' '}
+                  <li key={`o${o.kind}${o.start_ts}`}>
+                    <span className={`dot ${o.kind === 'wan' ? 'dot-warning' : 'dot-critical'}`} />
+                    <b>
+                      {OUTAGE_KINDS[o.kind]?.label ?? 'Outage'} {formatDuration((o.end_ts - o.start_ts) / 1000)}
+                      {o.ongoing && ' so far'}
+                    </b>{' '}
                     <span className="muted">{formatFull(o.start_ts)}</span>
+                    {o.reason && <div className="muted small">{o.reason}</div>}
                   </li>
                 ))}
               </ul>
@@ -257,8 +281,13 @@ export default function Insights() {
                 </dd>
               </div>
               <div className="kv-row">
-                <dt>New this period</dt>
-                <dd>{d?.devices.newInRange ?? '—'}</dd>
+                <dt>Joined this period</dt>
+                <dd>
+                  {d?.devices.newInRange ?? '—'}
+                  {d?.devices.firstSeenAt > d?.from && (
+                    <span className="muted"> (not counting those already there on {formatDayMonth(d.devices.firstSeenAt)})</span>
+                  )}
+                </dd>
               </div>
               <div className="kv-row">
                 <dt>Peak download</dt>
@@ -299,6 +328,43 @@ export default function Insights() {
           </Panel>
         </div>
       </div>
+    </div>
+  );
+}
+
+/** "on track for ~32 GB by 1 Dec", or why there's no projection yet. */
+function monthSub(m) {
+  if (m.projected == null) return 'projection after 2 days of data';
+  return `on track for ~${formatBytes(m.projected, 0)} by ${formatDayMonth(m.monthEnd - 1)}`;
+}
+
+/** Start "only this 4G band, every 5G band" as a 5-minute Radio control trial, then show it there. */
+function TryBand({ band, enabled }) {
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  if (!enabled) return <p className="rec-detail">In the router’s admin page: Network Setting → Broadband → Band.</p>;
+  async function start() {
+    setBusy(true);
+    try {
+      const radio = await api.radio();
+      // 4G only or 5G SA can’t combine a 4G band with 5G ones; NSA keeps the 5G leg.
+      const technology = ['Auto', 'NR5G-NSA'].includes(radio.technology.preferred) ? radio.technology.preferred : 'NR5G-NSA';
+      await api.radioApply({ technology, bands: [band, ...radio.bands.supported.filter(isNr)] });
+      toast(`Trying ${band}: switches back in 5 minutes unless you keep it`);
+      navigate('/radio');
+    } catch (e) {
+      toast(`Couldn’t start the trial: ${e.message}`, 'critical');
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="rec-buttons">
+      <button className="btn btn-sm btn-primary" disabled={busy} onClick={start}>
+        {busy ? 'Applying…' : `Try ${band} for 5 minutes`}
+      </button>
+      <button className="btn btn-sm btn-ghost" onClick={() => navigate('/radio')}>
+        Open Radio control
+      </button>
     </div>
   );
 }

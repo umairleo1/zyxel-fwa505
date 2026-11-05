@@ -2,6 +2,36 @@
 // SNMP community can be flagged without ever sending it to the browser.
 
 const isDfs = (ch) => ch >= 52 && ch <= 144;
+
+// IPv4 ranges that can't be reached from the Internet: RFC 1918 private space and the
+// RFC 6598 shared space carriers use for carrier-grade NAT.
+const NON_PUBLIC = [
+  [0x0a000000, 8], // 10.0.0.0/8
+  [0x64400000, 10], // 100.64.0.0/10
+  [0xac100000, 12], // 172.16.0.0/12
+  [0xc0a80000, 16], // 192.168.0.0/16
+];
+const ipv4 = (ip) => {
+  const parts = String(ip).split('.').map(Number);
+  return parts.length === 4 && parts.every((n) => Number.isInteger(n) && n >= 0 && n <= 255)
+    ? parts.reduce((a, b) => a * 256 + b, 0)
+    : null;
+};
+export const isPublicIpv4 = (ip) => {
+  const n = ipv4(ip);
+  return n != null && n !== 0 && !NON_PUBLIC.some(([net, bits]) => Math.floor(n / 2 ** (32 - bits)) === Math.floor(net / 2 ** (32 - bits)));
+};
+
+/** The internet-facing WAN interface's addresses, from the status object. */
+function wanAddresses(status) {
+  const wans = (status?.[0]?.WanLanInfo ?? []).filter((w) => w?.X_ZYXEL_Type === 'WAN' && w.Status === 'Up');
+  const wan = wans.find((w) => w.X_ZYXEL_DefaultGatewayIface) ?? wans[0];
+  if (!wan) return null;
+  const v4 = (wan.IPv4Address ?? []).map((a) => a?.IPAddress).find((ip) => ipv4(ip));
+  // Global unicast only (2000::/3): link-local and ULA addresses aren't reachable from outside.
+  const v6 = (wan.IPv6Address ?? []).map((a) => a?.IPAddress).find((ip) => /^[23][0-9a-f]{3}:/i.test(ip ?? ''));
+  return { v4: v4 ?? null, v6: v6 ?? null };
+}
 const check = (id, area, status, title, detail, fix) => ({ id, area, status, title, detail, fix: fix ?? null });
 
 /** Configuration audit. `get(id)` returns unwrapped raw data for a catalog endpoint. */
@@ -39,6 +69,34 @@ export async function runAudit(get) {
     );
   const out = [];
 
+  // Reachability. Behind carrier-grade NAT nothing on the Internet can open a connection
+  // to the router over IPv4, which changes what the exposure checks below mean.
+  const addr = wanAddresses(status);
+  const cgnat = addr?.v4 ? !isPublicIpv4(addr.v4) : null;
+  if (addr?.v4) {
+    out.push(
+      cgnat
+        ? check(
+            'cgnat',
+            'Internet',
+            'info',
+            `Behind carrier-grade NAT (WAN address ${addr.v4})`,
+            `Your provider shares public addresses between customers, so nothing on the Internet can start an IPv4 connection to you: port forwards, remote management and hosting a server won't work, and scanners can't reach the router.${addr.v6 ? ` The router also has a public IPv6 address (${addr.v6}); inbound IPv6 is down to the firewall.` : ''}`,
+            'For inbound access, ask your provider for a public IP, or use an outbound tunnel (e.g. Tailscale or Cloudflare Tunnel).',
+          )
+        : check(
+            'cgnat',
+            'Internet',
+            'info',
+            `Public IPv4 address (${addr.v4})`,
+            'The router is directly reachable from the Internet, so the firewall and remote management settings below matter.',
+          ),
+    );
+  }
+  const unreachable = cgnat ? ' (and unreachable from the Internet anyway: carrier-grade NAT)' : '';
+  // Still worth fixing: a public IP, a provider change or IPv6 would expose it.
+  const behindNat = cgnat ? ' Carrier-grade NAT blocks this over IPv4 today, but not if you get a public IP, and not over IPv6.' : '';
+
   // Remote management exposure
   if (mgmt) {
     const exposed = mgmt.filter((s) => /WAN/i.test(s.Mode || ''));
@@ -50,7 +108,7 @@ export async function runAudit(get) {
             'Access',
             'fail',
             'Unencrypted management reachable from the Internet',
-            `${insecure.map((s) => `${s.Name}:${s.Port}`).join(', ')} accept WAN connections.`,
+            `${insecure.map((s) => `${s.Name}:${s.Port}`).join(', ')} accept WAN connections.${behindNat}`,
             'Maintenance → Remote Management: set these to LAN only or Disable.',
           )
         : exposed.length
@@ -59,7 +117,7 @@ export async function runAudit(get) {
               'Access',
               'warn',
               'Management reachable from the Internet',
-              `${exposed.map((s) => `${s.Name}:${s.Port}`).join(', ')} accept WAN connections.`,
+              `${exposed.map((s) => `${s.Name}:${s.Port}`).join(', ')} accept WAN connections.${behindNat}`,
               'Restrict to trusted IPs (Trust Domain) or LAN only.',
             )
           : check(
@@ -70,7 +128,7 @@ export async function runAudit(get) {
               `${mgmt
                 .filter((s) => s.Mode)
                 .map((s) => s.Name)
-                .join(', ')} restricted to the LAN; others disabled.`,
+                .join(', ')} restricted to the LAN; others disabled${unreachable}.`,
             ),
     );
     const telnet = mgmt.find((s) => /TELNET/i.test(s.Name));
@@ -119,8 +177,8 @@ export async function runAudit(get) {
           'Wi-Fi',
           'info',
           'Default network name',
-          'The SSID reveals the router brand, which helps attackers pick known exploits.',
-          'Rename the SSID to something neutral.',
+          'The name shows the router make to anyone nearby. Renaming is tidiness, not a security fix: WPA2/WPA3 is what protects the network.',
+          'Optional: rename the SSID to something neutral.',
         ),
       );
     const guest = wlan.filter((w) => !w.MainSSID && w.wlEnable);
@@ -240,7 +298,17 @@ export async function runAudit(get) {
     );
   }
   const fwInfo = status?.[0]?.FirewallInfo;
-  if (fwInfo)
+  if (fwInfo && cgnat)
+    out.push(
+      check(
+        'ping',
+        'Firewall',
+        'pass',
+        "Pings from the Internet can't reach the router",
+        `Carrier-grade NAT drops them before they get here${fwInfo.X_ZYXEL_DenyPing ? '; the router would ignore them too' : ''}.`,
+      ),
+    );
+  else if (fwInfo)
     out.push(
       check(
         'ping',
@@ -258,7 +326,9 @@ export async function runAudit(get) {
         'Firewall',
         dmz && dmz !== '0.0.0.0' ? 'fail' : 'pass',
         dmz && dmz !== '0.0.0.0' ? `DMZ host ${dmz} is fully exposed` : 'No DMZ host',
-        dmz && dmz !== '0.0.0.0' ? 'All unsolicited inbound traffic is forwarded to this device.' : 'No device is fully exposed.',
+        dmz && dmz !== '0.0.0.0'
+          ? 'All unsolicited inbound traffic is forwarded to this device.'
+          : `No device is fully exposed${unreachable}.`,
         dmz && dmz !== '0.0.0.0' ? 'Use specific port forwards instead.' : null,
       ),
     );
@@ -268,13 +338,13 @@ export async function runAudit(get) {
       check(
         'portfwd',
         'Firewall',
-        nat.length ? 'info' : 'pass',
-        nat.length ? `${nat.length} port forward rule(s)` : 'No port forwards',
+        nat.length ? (cgnat ? 'warn' : 'info') : 'pass',
+        nat.length ? `${nat.length} port forward rule(s)${cgnat ? " that can't work" : ''}` : 'No port forwards',
         nat.length
-          ? nat
+          ? `${nat
               .map((r) => `${r.Description || r.ServiceName || 'rule'} → ${r.InternalClient || r.X_ZYXEL_InternalClient || '?'}`)
-              .join('; ')
-          : 'Nothing on your LAN is published to the Internet.',
+              .join('; ')}${cgnat ? '. Behind carrier-grade NAT no inbound IPv4 connection arrives, so these never fire.' : ''}`
+          : `Nothing on your LAN is published to the Internet${unreachable}.`,
       ),
     );
 
@@ -330,8 +400,11 @@ export async function runAudit(get) {
         'ntp',
         'Maintenance',
         time[0].NTPServer1 && time[0].NTPServer1 !== 'None' ? 'pass' : 'warn',
-        'Clock synced via NTP',
-        `${time[0].NTPServer1} · ${time[0].TimeZone}`,
+        time[0].NTPServer1 && time[0].NTPServer1 !== 'None' ? 'Clock synced via NTP' : 'No time server configured',
+        time[0].NTPServer1 && time[0].NTPServer1 !== 'None'
+          ? `${time[0].NTPServer1} · ${time[0].TimeZone}`
+          : 'Log times and schedules (Wi-Fi, parental control) can drift.',
+        time[0].NTPServer1 && time[0].NTPServer1 !== 'None' ? null : 'Maintenance → Time: set an NTP server such as pool.ntp.org.',
       ),
     );
   if (logset?.[0]) {
@@ -368,7 +441,9 @@ export async function runAudit(get) {
   out.sort((a, b) => order[a.status] - order[b.status]);
   const counts = { pass: 0, info: 0, warn: 0, fail: 0 };
   for (const c of out) counts[c.status]++;
-  // Simple score: passes count fully, infos half, warnings a quarter, fails zero.
-  const scored = out.length ? Math.round(((counts.pass + counts.info * 0.75 + counts.warn * 0.25) / out.length) * 100) : null;
-  return { checks: out, counts, score: scored, at: Date.now() };
+  // Only checks with a verdict count: passes fully, "review" a quarter, risks nothing.
+  // Notes are facts (firmware version, TR-069 off), so they never move the score.
+  const scored = counts.pass + counts.warn + counts.fail;
+  const score = scored ? Math.round(((counts.pass + counts.warn * 0.25) / scored) * 100) : null;
+  return { checks: out, counts, score, scored, at: Date.now() };
 }
