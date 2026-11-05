@@ -16,3 +16,15 @@ test('histogram statistics are exact', () => {
   assert.deepEqual(s.dist, { excellent: 60, good: 0, fair: 30, poor: 10 });
   assert.equal(histogramStats([], [0, 0, 0]), null);
 });
+
+test('half-dB readings give a tidy histogram and rounded statistics', () => {
+  const s = histogramStats(
+    [
+      { v: -10.5, c: 2 },
+      { v: -10, c: 1 },
+      { v: 1 / 3, c: 1 }, // not from a modem, but must not leak 16 digits into the UI
+    ],
+    [20, 13, 0],
+  );
+  assert.deepEqual([s.stats.min, s.stats.max], [-10.5, 0.3]);
+});

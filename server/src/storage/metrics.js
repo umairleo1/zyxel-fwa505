@@ -24,7 +24,14 @@ export function histogramStats(hist, cuts) {
   const share = (pred) => round1((hist.filter((h) => pred(h.v)).reduce((a, h) => a + h.c, 0) / n) * 100);
   const [excellent, good, fair] = cuts;
   return {
-    stats: { n, avg: round1(sum / n), min: hist[0].v, max: hist.at(-1).v, p10: quantile(0.1), p90: quantile(0.9) },
+    stats: {
+      n,
+      avg: round1(sum / n),
+      min: round1(hist[0].v),
+      max: round1(hist.at(-1).v),
+      p10: round1(quantile(0.1)),
+      p90: round1(quantile(0.9)),
+    },
     dist: {
       excellent: share((v) => v >= excellent),
       good: share((v) => v >= good && v < excellent),
@@ -77,17 +84,69 @@ export function metricsRepo(db, sql, hooks) {
     },
 
     /**
-     * Distribution statistics for one column. Readings are whole dB(m) values, so a
-     * single GROUP BY pass yields an exact histogram (~60 rows) instead of loading
-     * every sample (~500k for 30 days) into JavaScript.
+     * Distribution statistics for one column. Readings are whole (some firmware: half)
+     * dB(m) values, so one GROUP BY pass on 0.1 dB yields an exact histogram (~60 rows)
+     * instead of loading every sample (~500k for 30 days) into JavaScript.
      */
     metricStats(col, from, to, cuts) {
       if (!METRIC_COLS.includes(col)) throw new Error(`Unknown metric column ${col}`);
       flushMetrics();
       const hist = sql(
-        `SELECT ${col} AS v, COUNT(*) AS c FROM metrics WHERE ts >= ? AND ts <= ? AND ${col} IS NOT NULL GROUP BY v ORDER BY v`,
+        `SELECT ROUND(${col}, 1) AS v, COUNT(*) AS c FROM metrics WHERE ts >= ? AND ts <= ? AND ${col} IS NOT NULL GROUP BY v ORDER BY v`,
       ).all(from, to);
       return histogramStats(hist, cuts);
+    },
+
+    /**
+     * Spans in [from, to] longer than `minGapMs` without a signal sample: Insight wasn't
+     * collecting (stopped, asleep, paused) or the router didn't answer. Edges count, so
+     * a range that starts before the first sample opens with a gap. Oldest first.
+     */
+    sampleGaps(from, to, minGapMs) {
+      flushMetrics();
+      const before = sql('SELECT MAX(ts) AS ts FROM metrics WHERE ts < ?').get(from).ts;
+      const after = sql('SELECT MIN(ts) AS ts FROM metrics WHERE ts > ?').get(to).ts;
+      const inner = sql(`SELECT prev AS start, ts AS end FROM (
+          SELECT ts, LAG(ts) OVER (ORDER BY ts) AS prev FROM metrics WHERE ts >= ? AND ts <= ?
+        ) WHERE ts - prev > ?`)
+        .all(from, to, minGapMs)
+        .map((r) => ({ start: r.start, end: r.end }));
+      const { first, last } = sql('SELECT MIN(ts) AS first, MAX(ts) AS last FROM metrics WHERE ts >= ? AND ts <= ?').get(from, to);
+      if (first == null) {
+        // No sample in the window: one gap, unless samples either side are close enough to bridge it.
+        const a = before ?? from;
+        const b = after ?? to;
+        return b - a > minGapMs ? [{ start: Math.max(a, from), end: Math.min(b, to) }] : [];
+      }
+      // A gap crossing an edge is drawn clipped. With nothing after `to` the gap runs
+      // to now, so it only counts once it's longer than minGapMs itself.
+      const gaps = [];
+      if (first > from && first - (before ?? -Infinity) > minGapMs) gaps.push({ start: Math.max(before ?? from, from), end: first });
+      gaps.push(...inner);
+      if (last < to && (after ?? to) - last > minGapMs) gaps.push({ start: last, end: to });
+      return gaps;
+    },
+
+    /** Time of the oldest signal sample, or null: when Insight started watching. */
+    firstMetricTs() {
+      flushMetrics();
+      return sql('SELECT MIN(ts) AS ts FROM metrics').get().ts ?? null;
+    },
+
+    /**
+     * Signal by local hour of day (0-23) over [from, to]: average SINR and RSRP per leg,
+     * sample count and on how many distinct days the hour was seen. Hours without
+     * samples are absent.
+     */
+    hourlySignal(from, to) {
+      flushMetrics();
+      return sql(`SELECT CAST(strftime('%H', ts / 1000, 'unixepoch', 'localtime') AS INTEGER) AS hour,
+          ROUND(AVG(lte_sinr), 1) AS lte_sinr, ROUND(AVG(nr_sinr), 1) AS nr_sinr,
+          ROUND(AVG(lte_rsrp), 1) AS lte_rsrp, ROUND(AVG(nr_rsrp), 1) AS nr_rsrp,
+          COUNT(*) AS n, COUNT(DISTINCT date(ts / 1000, 'unixepoch', 'localtime')) AS days
+        FROM metrics WHERE ts >= ? AND ts <= ? GROUP BY hour ORDER BY hour`)
+        .all(from, to)
+        .map((r) => ({ ...r }));
     },
 
     /** One pass: samples, minutes with data (coverage), 5G samples, distinct cells; plus combo shares. */

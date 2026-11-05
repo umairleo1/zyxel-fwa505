@@ -3,6 +3,7 @@ import { RouterError } from '../router/client.js';
 import { newLines, parseRouterLine } from '../logs/parse.js';
 import { findKey, scalars, toNumber } from '../lib/util.js';
 import { interpretRadio } from './radio.js';
+import { wanStatus } from './wan.js';
 import { performance } from 'node:perf_hooks';
 import { SAME_BOOT_MS, detectReboot, rebootMessage, uptimeContinues } from './reboots.js';
 
@@ -11,6 +12,10 @@ import { SAME_BOOT_MS, detectReboot, rebootMessage, uptimeContinues } from './re
 const clock = () => performance.timeOrigin + performance.now();
 
 const FULL_STATUS_MS = 60_000; // device info + uptime; signal comes from cellwan_status every poll
+// A mobile-data drop starts at the last reading that was up, if that's this recent;
+// otherwise (first reading after a start or a router outage) at the first one that wasn't.
+const WAN_LAST_UP_MS = 120_000;
+const wanIdle = (lastUpAt = null) => ({ lastUpAt, downSince: null, downCount: 0, reason: null, confirmed: false });
 
 const WINDOW = 200; // more than GET_LOG's 100 lines, so the overlap is always found
 const LOGS = [
@@ -43,6 +48,7 @@ export class Collector extends EventEmitter {
     this.lastUptime = null; // { uptimeSec, mono } from the previous full status, this process
     this.fullStatus = null; // { data, at }
     this.outageStart = null;
+    this.wan = wanIdle();
     this.lastCell = null;
     this.cellwanSupported = true;
     this.state = {
@@ -72,9 +78,11 @@ export class Collector extends EventEmitter {
           start_ts: this.outageStart,
           end_ts: Date.now(),
           reason: `${this.state.lastError?.kind ?? 'unknown'} (Insight stopped)`,
+          kind: 'router',
         }),
       );
     }
+    this.#closeWanOutage(Date.now(), 'Insight stopped');
     await this.client.logout().catch(() => {});
   }
 
@@ -85,6 +93,8 @@ export class Collector extends EventEmitter {
     // Free the session so the router's own web UI can log in. Suspend first, so a
     // poll or sampler request already queued can't log straight back in.
     this.client.suspend();
+    // Nothing is watched while paused, so a drop in progress ends here.
+    this.#closeWanOutage(Date.now(), 'collector paused');
     await this.client.logout().catch(() => {});
     this.#event('notice', 'Collector paused; router session released');
     this.emit('change');
@@ -161,7 +171,9 @@ export class Collector extends EventEmitter {
         const end = Date.now();
         // One failed request that succeeds on the next try is a glitch, not an outage.
         if (this.failures >= 2)
-          this.#safely(() => this.db.insertOutage({ start_ts: this.outageStart, end_ts: end, reason: this.state.lastError?.kind ?? null }));
+          this.#safely(() =>
+            this.db.insertOutage({ start_ts: this.outageStart, end_ts: end, reason: this.state.lastError?.kind ?? null, kind: 'router' }),
+          );
         this.#event('notice', `Router connection restored after ${Math.round((end - this.outageStart) / 1000)}s`);
       } else if (this.state.phase !== 'ok' && this.state.phase !== 'starting') {
         this.#event('notice', 'Router connection restored');
@@ -185,6 +197,9 @@ export class Collector extends EventEmitter {
     if (kind === 'paused') return; // a request cut short by Pause, not a router problem
     this.failures++;
     this.state.lastError = { kind, message: err.message, at: Date.now() };
+    // Mobile data can't be judged while the router doesn't answer: a drop seen after
+    // this must not be backdated to before it.
+    this.wan.lastUpAt = null;
     this.log.warn(`[collector] ${kind}: ${err.message}`);
 
     if (kind === 'auth') {
@@ -243,7 +258,9 @@ export class Collector extends EventEmitter {
     const now = Date.now();
     // The big DAL status object (device info, uptime) changes slowly: refresh it once a minute.
     let fresh = false;
-    if (!this.fullStatus || clock() - this.fullStatus.monoAt >= FULL_STATUS_MS || this.lastStatusPoll === 0) {
+    // While mobile data looks down, every poll: the WAN address lives in this object, and
+    // recovery should show within seconds, not a minute.
+    if (!this.fullStatus || clock() - this.fullStatus.monoAt >= FULL_STATUS_MS || this.lastStatusPoll === 0 || this.wan.downCount) {
       this.fullStatus = { data: await this.client.getStatus(), at: now, monoAt: clock() };
       fresh = true;
     }
@@ -281,6 +298,8 @@ export class Collector extends EventEmitter {
       this.#event('notice', `Serving cell changed: ${this.lastCell.label} → ${servingCell.label}`, 'cell');
     }
     if (servingCell) this.lastCell = servingCell;
+    const wan = wanStatus(data, cellwan);
+    this.#trackWan(wan, now);
 
     this.state.router = {
       fetchedAt: now,
@@ -291,6 +310,7 @@ export class Collector extends EventEmitter {
       carriers: ca,
       cell,
       nr,
+      wan: { up: wan.up, reason: wan.reason, since: this.wan.confirmed ? this.wan.downSince : null },
       // Raw scalars + SCC list, kept so new firmware fields can be inspected via /api/status.
       cellwan: cellwan ? { ...scalars(cellwan), SCC_Info: cellwan.SCC_Info ?? null } : null,
     };
@@ -315,6 +335,49 @@ export class Collector extends EventEmitter {
         }),
       );
     }
+  }
+
+  /**
+   * Mobile data drops, debounced like router outages: one reading down is a glitch,
+   * two in a row an outage. Logged when confirmed, stored when it ends.
+   */
+  #trackWan({ up, reason }, now) {
+    if (up === null) return; // firmware doesn't say
+    const w = this.wan;
+    if (up) {
+      if (w.confirmed) this.#closeWanOutage(now);
+      this.wan = wanIdle(now);
+      return;
+    }
+    if (!w.downCount) w.downSince = w.lastUpAt && now - w.lastUpAt <= WAN_LAST_UP_MS ? w.lastUpAt : now;
+    w.downCount++;
+    w.reason ??= reason; // the first symptom is the cause; later ones follow from it
+    if (!w.confirmed && w.downCount >= 2) {
+      w.confirmed = true;
+      this.#event('warning', `Mobile data connection lost: ${w.reason}`, 'wan');
+    }
+  }
+
+  /** Store a confirmed mobile-data outage ending at `end` (`note` says why it ended there). */
+  #closeWanOutage(end, note = null) {
+    const w = this.wan;
+    if (w.confirmed) {
+      this.#safely(() =>
+        this.db.insertOutage({ start_ts: w.downSince, end_ts: end, reason: note ? `${w.reason} (${note})` : w.reason, kind: 'wan' }),
+      );
+      if (!note) this.#event('notice', `Mobile data connection restored after ${Math.round((end - w.downSince) / 1000)}s`, 'wan');
+    }
+    this.wan = wanIdle();
+  }
+
+  /** Outages still in progress, which the database only gets once they end. For live views. */
+  openOutages(now = Date.now()) {
+    const open = [];
+    if (this.state.phase === 'backoff' && this.outageStart && this.failures >= 2) {
+      open.push({ kind: 'router', start_ts: this.outageStart, end_ts: now, reason: this.state.lastError?.kind ?? null, ongoing: true });
+    }
+    if (this.wan.confirmed) open.push({ kind: 'wan', start_ts: this.wan.downSince, end_ts: now, reason: this.wan.reason, ongoing: true });
+    return open;
   }
 
   /**

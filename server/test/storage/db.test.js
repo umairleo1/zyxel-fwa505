@@ -88,3 +88,58 @@ test('the band backfill failing does not stop the database opening', () => {
   }
   assert.ok(errors.some((e) => /backfill failed/.test(e)));
 });
+
+test('sampleGaps finds stretches without signal samples, including at the edges', () => {
+  const db = openDb(path.join(tmpDir(), 'gaps.db'));
+  for (const ts of [10_000, 15_000, 20_000, 200_000, 205_000]) db.insertMetric(metric(ts));
+  const min = 60_000;
+  assert.deepEqual(db.sampleGaps(0, 300_000, min), [
+    { start: 0, end: 10_000 }, // before the first sample ever
+    { start: 20_000, end: 200_000 },
+    { start: 205_000, end: 300_000 }, // nothing since: open-ended, but longer than min
+  ]);
+  // A window inside a gap, and one clipped by a gap that started before it.
+  assert.deepEqual(db.sampleGaps(50_000, 100_000, min), [{ start: 50_000, end: 100_000 }]);
+  assert.deepEqual(db.sampleGaps(100_000, 210_000, min), [{ start: 100_000, end: 200_000 }]);
+  // Samples close to both edges: no gap.
+  assert.deepEqual(db.sampleGaps(12_000, 18_000, min), []);
+  assert.deepEqual(db.sampleGaps(205_000, 230_000, min), [], 'shorter than min since the last sample');
+  db.close();
+});
+
+test('outages from before mobile-data tracking become router outages', () => {
+  const file = path.join(tmpDir(), 'old.db');
+  const old = new DatabaseSync(file);
+  old.exec('CREATE TABLE outages (start_ts INTEGER PRIMARY KEY, end_ts INTEGER, reason TEXT)');
+  old.prepare('INSERT INTO outages VALUES (?, ?, ?)').run(1_000, 2_000, 'timeout');
+  old.close();
+
+  const db = openDb(file);
+  db.insertOutage({ start_ts: 3_000, end_ts: 4_000, reason: 'No WAN IP address', kind: 'wan' });
+  assert.deepEqual(
+    db.outages(0, 10_000).map((o) => [o.start_ts, o.kind]),
+    [
+      [3_000, 'wan'],
+      [1_000, 'router'],
+    ],
+  );
+  db.close();
+});
+
+test('signal stored before filtering loses its "no measurement" values once', () => {
+  const file = path.join(tmpDir(), 'readings.db');
+  const db = openDb(file);
+  db.insertMetric({ ts: 1_000, lte_rsrp: -100, lte_sinr: 8 });
+  db.close();
+  // Rows written by an older Insight, before the filter existed.
+  const raw = new DatabaseSync(file);
+  raw.prepare('INSERT INTO metrics (ts, lte_rsrp, lte_rsrq, lte_sinr) VALUES (?, ?, ?, ?)').run(2_000, -128, -128, -128);
+  raw.prepare("DELETE FROM meta WHERE key = 'readingsCleaned'").run();
+  raw.close();
+
+  const again = openDb(file);
+  const s = again.metricStats('lte_sinr', 0, 10_000, [20, 13, 0]);
+  assert.deepEqual([s.stats.n, s.stats.min], [1, 8]);
+  assert.equal(again.metricStats('lte_rsrp', 0, 10_000, [-94, -99, -105]).stats.min, -100);
+  again.close();
+});

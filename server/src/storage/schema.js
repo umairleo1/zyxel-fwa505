@@ -1,4 +1,5 @@
 import { backfillBands, setRunStarts } from './bands.js';
+import { NO_MEASUREMENT_VALUES, READING_RANGES } from '../lib/readings.js';
 
 /** Create tables/indexes and apply additive migrations. Idempotent. */
 export function migrate(db) {
@@ -41,7 +42,8 @@ export function migrate(db) {
     CREATE INDEX IF NOT EXISTS station_ts ON station_samples (ts);
 
     CREATE TABLE IF NOT EXISTS reboots (boot_ts INTEGER PRIMARY KEY, detected_at INTEGER, kind TEXT, reason TEXT, last_seen_before INTEGER);
-    CREATE TABLE IF NOT EXISTS outages (start_ts INTEGER PRIMARY KEY, end_ts INTEGER, reason TEXT);
+    -- kind: router (didn't answer Insight) | wan (answered, but mobile data was down)
+    CREATE TABLE IF NOT EXISTS outages (start_ts INTEGER PRIMARY KEY, end_ts INTEGER, reason TEXT, kind TEXT NOT NULL DEFAULT 'router');
     CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 
     -- Every band and cell the router has used (see storage/bands.js). Sums, not samples.
@@ -71,6 +73,31 @@ export function migrate(db) {
     ['cell', 'TEXT'],
   ]) {
     if (!metricCols.has(col)) db.exec(`ALTER TABLE metrics ADD COLUMN ${col} ${type}`);
+  }
+
+  // Signal stored before the modem's "no measurement" values were filtered out (see
+  // lib/readings.js) would show as impossible minimums like -128 dB SINR. Once.
+  if (!db.prepare("SELECT 1 FROM meta WHERE key = 'readingsCleaned'").get()) {
+    const bad = NO_MEASUREMENT_VALUES.join(', ');
+    const has = new Set(
+      db
+        .prepare("SELECT name FROM pragma_table_info('metrics')")
+        .all()
+        .map((c) => c.name),
+    );
+    for (const leg of ['lte', 'nr']) {
+      for (const [kind, [lo, hi]] of Object.entries(READING_RANGES)) {
+        const col = `${leg}_${kind}`;
+        if (!has.has(col)) continue;
+        db.prepare(`UPDATE metrics SET ${col} = NULL WHERE ${col} IN (${bad}) OR ${col} < ? OR ${col} > ?`).run(lo, hi);
+      }
+    }
+    db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('readingsCleaned', '1')").run();
+  }
+
+  // Outages from before mobile-data tracking are all "router unreachable".
+  if (!db.prepare('SELECT 1 FROM pragma_table_info(?) WHERE name = ?').get('outages', 'kind')) {
+    db.exec("ALTER TABLE outages ADD COLUMN kind TEXT NOT NULL DEFAULT 'router'");
   }
 
   // bands tables created before session tracking lack run_start.

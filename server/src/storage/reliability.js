@@ -1,4 +1,4 @@
-/** Reboots (from uptime), outages (router unreachable) and small persistent key/value state. */
+/** Reboots (from uptime), outages (router unreachable or mobile data down) and small persistent key/value state. */
 export function reliabilityRepo(sql) {
   return {
     insertReboot: (r) =>
@@ -12,7 +12,12 @@ export function reliabilityRepo(sql) {
     reboots: (from, to = Date.now()) =>
       sql('SELECT * FROM reboots WHERE boot_ts >= ? AND boot_ts <= ? ORDER BY boot_ts DESC').all(from, to),
     insertOutage: (o) =>
-      sql('INSERT OR REPLACE INTO outages (start_ts, end_ts, reason) VALUES (?, ?, ?)').run(o.start_ts, o.end_ts, o.reason),
+      sql('INSERT OR REPLACE INTO outages (start_ts, end_ts, reason, kind) VALUES (?, ?, ?, ?)').run(
+        o.start_ts,
+        o.end_ts,
+        o.reason,
+        o.kind ?? 'router',
+      ),
     outages: (from, to = Date.now()) =>
       sql('SELECT * FROM outages WHERE end_ts >= ? AND start_ts <= ? ORDER BY start_ts DESC').all(from, to),
 

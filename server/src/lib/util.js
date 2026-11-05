@@ -23,3 +23,30 @@ export function scalars(obj) {
   if (!o || typeof o !== 'object') return null;
   return Object.fromEntries(Object.entries(o).filter(([, v]) => v === null || typeof v !== 'object'));
 }
+
+/** Union of time spans ({ start, end }), sorted and with overlapping or touching spans merged. */
+export function mergeSpans(spans) {
+  const out = [];
+  for (const s of [...spans].sort((a, b) => a.start - b.start)) {
+    const last = out.at(-1);
+    if (last && s.start <= last.end) last.end = Math.max(last.end, s.end);
+    else if (s.end > s.start) out.push({ start: s.start, end: s.end });
+  }
+  return out;
+}
+
+/** Parts of `spans` not covered by any of `holes`, dropping pieces shorter than `minMs`. */
+export function subtractSpans(spans, holes, minMs = 0) {
+  const cut = mergeSpans(holes);
+  const out = [];
+  for (const s of spans) {
+    let start = s.start;
+    for (const h of cut) {
+      if (h.end <= start || h.start >= s.end) continue;
+      if (h.start - start > minMs) out.push({ ...s, start, end: h.start });
+      start = Math.max(start, h.end);
+    }
+    if (s.end - start > minMs) out.push({ ...s, start, end: s.end });
+  }
+  return out;
+}

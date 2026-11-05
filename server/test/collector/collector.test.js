@@ -244,3 +244,79 @@ test('a wall-clock step between reads is not a reboot', async (t) => {
   assert.equal(h.reboots.length, 0);
   await h.c.stop();
 });
+
+// Mobile data: `script` has one 'up' / 'down' per status poll (cellular interface state).
+function wanHarness(script) {
+  const outages = [];
+  const events = [];
+  const db = {
+    lastRaw: () => [],
+    insertMany: (rows) => events.push(...rows),
+    insertOutage: (o) => outages.push(o),
+    insertMetric() {},
+    recordCarriers() {},
+    insertSystem() {},
+    getMeta: () => null,
+    setMeta() {},
+    logsBetween: () => [],
+  };
+  let i = 0;
+  const client = {
+    getLog: async () => [],
+    getStatus: async () => ({ Object: [{ DeviceInfo: { UpTime: 100 } }] }),
+    getCellwanStatus: async () => ({ INTF_Status: script[i++] === 'down' ? 'Down' : 'Up', USIM_Status: 'DEVST_SIM_RDY' }),
+    async logout() {},
+    suspend() {},
+    resume() {},
+  };
+  const c = new Collector({ client, db, pollIntervalSec: 120, statusIntervalSec: 5, log: { warn() {}, info() {} } });
+  const poll = async (n) => {
+    for (let k = 0; k < n; k++) {
+      c.lastStatusPoll = 0;
+      await c.tickForTest();
+    }
+  };
+  return { c, outages, wanEvents: () => events.filter((e) => e.facility === 'wan'), poll };
+}
+
+test('one reading without mobile data is a glitch, not an outage', async () => {
+  const { c, outages, wanEvents, poll } = wanHarness(['up', 'down', 'up']);
+  await poll(3);
+  assert.deepEqual(outages, []);
+  assert.deepEqual(wanEvents(), []);
+  assert.equal(c.state.router.wan.up, true);
+  await c.stop();
+});
+
+test('a mobile data drop is logged when confirmed and stored when it ends', async () => {
+  const { c, outages, wanEvents, poll } = wanHarness(['up', 'down', 'down', 'down', 'up']);
+  await poll(1);
+  const lastUp = c.wan.lastUpAt;
+  await poll(3);
+  assert.deepEqual(
+    wanEvents().map((e) => [e.level, e.message]),
+    [['warning', 'Mobile data connection lost: Cellular interface down']],
+  );
+  assert.equal(c.state.router.wan.up, false);
+  assert.equal(c.state.router.wan.since, lastUp, 'starts at the last reading that was up');
+  assert.deepEqual(
+    c.openOutages().map((o) => [o.kind, o.start_ts, o.ongoing]),
+    [['wan', lastUp, true]],
+  );
+
+  await poll(1);
+  assert.equal(outages.length, 1);
+  assert.deepEqual({ ...outages[0], end_ts: 0 }, { start_ts: lastUp, end_ts: 0, reason: 'Cellular interface down', kind: 'wan' });
+  assert.match(wanEvents().at(-1).message, /^Mobile data connection restored after \d+s$/);
+  assert.deepEqual(c.openOutages(), []);
+  await c.stop();
+});
+
+test('a mobile data drop still open at shutdown is stored, marked as cut short', async () => {
+  const { c, outages, poll } = wanHarness(['down', 'down']);
+  await poll(2);
+  await c.stop();
+  assert.equal(outages.length, 1);
+  assert.equal(outages[0].kind, 'wan');
+  assert.equal(outages[0].reason, 'Cellular interface down (Insight stopped)');
+});
