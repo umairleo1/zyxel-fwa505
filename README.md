@@ -72,7 +72,8 @@ The router's admin sections (Broadband, Wireless, Home networking, Routing and N
     <td><b>Router settings</b>: read-only mirror of the admin pages<br><img src="docs/screenshots/settings.png" alt="Router settings"></td>
   </tr>
   <tr>
-    <td colspan="2" align="center"><b>Messages</b>: the SIM's texts as conversations, with replies and a live SMS-part counter<br><img src="docs/screenshots/messages.png" alt="Messages" width="50%"></td>
+    <td><b>Messages</b>: the SIM's texts as conversations, with replies and a live SMS-part counter<br><img src="docs/screenshots/messages.png" alt="Messages"></td>
+    <td><b>Radio control</b>: network mode and bands, with live and average readings per band, as trials that revert unless kept<br><img src="docs/screenshots/radio.png" alt="Radio control"></td>
   </tr>
 </table>
 
