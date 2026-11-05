@@ -1,5 +1,5 @@
 // Generic UI building blocks.
-export { PageHeader, Panel } from './Layout.jsx';
+export { PageHeader, PageLoader, Panel } from './Layout.jsx';
 export { Bool, Value, KV } from './Values.jsx';
 export { DataTable } from './DataTable.jsx';
 export { Stat } from './Stat.jsx';

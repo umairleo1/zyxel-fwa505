@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { api } from '../api/client.js';
 import { useAsync, useRouterData } from '../hooks/index.js';
 import { useLive } from '../app/live.js';
-import { Bool, DataTable, PageHeader, Panel, SourceNote } from '../components/ui/index.js';
+import { Bool, DataTable, PageHeader, Panel, SourceNote, PageLoader } from '../components/ui/index.js';
 import Segmented from '../components/ui/Segmented.jsx';
 
 const TABS = [
@@ -21,6 +21,7 @@ export default function Tables() {
 
   return (
     <div className="page">
+      {!r.data && r.loading && <PageLoader />}
       <PageHeader title="Network tables" subtitle="The router's live routing, neighbour and interface tables.">
         <SourceNote fetchedAt={r.fetchedAt} stale={r.stale} onRefresh={r.reload} loading={r.loading} />
       </PageHeader>

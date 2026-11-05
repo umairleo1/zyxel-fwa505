@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useRouterData } from '../../hooks/index.js';
-import { DataTable, KV, PageHeader, SourceNote, ErrorNote } from '../../components/ui/index.js';
+import { DataTable, KV, PageHeader, SourceNote, ErrorNote, PageLoader } from '../../components/ui/index.js';
 import { isEmpty } from '../../lib/labels.js';
 import { SETTINGS } from './definitions.js';
 import { ChevronDown } from '../../components/ui/Icons.jsx';
@@ -63,12 +63,12 @@ export default function Settings({ pageId }) {
 
   return (
     <div className="page">
+      {!r.data && r.loading && <PageLoader />}
       <PageHeader title={page.title} subtitle={page.intro}>
         <SourceNote fetchedAt={r.fetchedAt} stale={r.stale} onRefresh={r.reload} loading={r.loading} />
       </PageHeader>
       <div className="readonly-note">Read-only view. Change these settings in the router’s admin page.</div>
       <ErrorNote error={r.error} />
-      {!r.data && r.loading && <div className="skeleton-block" />}
       {used.length > 0 && (
         <nav className="toc" aria-label="Sections">
           {used.map((s) => (

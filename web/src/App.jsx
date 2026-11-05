@@ -1,13 +1,14 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from './api/client.js';
 import { useInterval, useServerEvents, useThrottle, useTheme } from './hooks/index.js';
-import { LiveContext } from './app/live.js';
+import { LiveContext, ToastContext } from './app/live.js';
 import { href, navigate, useRoute } from './app/route.jsx';
 import { NAV_ITEMS } from './app/nav.js';
 import Sidebar from './components/shell/Sidebar.jsx';
 import TopBar from './components/shell/TopBar.jsx';
 import Banners from './components/shell/Banners.jsx';
 import { Check, Alert } from './components/ui/Icons.jsx';
+import { PageLoader } from './components/ui/index.js';
 import Dashboard from './pages/Dashboard.jsx';
 import Cellular from './pages/Cellular.jsx';
 import Devices from './pages/Devices.jsx';
@@ -17,8 +18,14 @@ import System from './pages/System.jsx';
 import Tables from './pages/Tables.jsx';
 
 // Less-visited pages load on demand; settings carry the large field definitions.
-const Insights = lazy(() => import('./pages/Insights.jsx'));
-const Settings = lazy(() => import('./pages/settings/Settings.jsx'));
+const loadInsights = () => import('./pages/Insights.jsx');
+const loadSettings = () => import('./pages/settings/Settings.jsx');
+const loadMessages = () => import('./pages/Messages.jsx');
+const loadRadio = () => import('./pages/Radio.jsx');
+const Insights = lazy(loadInsights);
+const Settings = lazy(loadSettings);
+const Messages = lazy(loadMessages);
+const Radio = lazy(loadRadio);
 
 // With the event stream connected, data refreshes on push; the slow tick only slides
 // preset time windows forward. Without it, fall back to polling.
@@ -36,6 +43,8 @@ const PAGES = {
   traffic: Traffic,
   system: System,
   tables: Tables,
+  messages: Messages,
+  radio: Radio,
 };
 
 export default function App() {
@@ -90,6 +99,12 @@ export default function App() {
   useEffect(() => {
     refreshStatus();
   }, [refreshStatus]);
+  // Fetch the on-demand pages' code once the first screen is up, so opening them later
+  // shows the page (with its loading spinner) instead of waiting on a download.
+  useEffect(() => {
+    const id = setTimeout(() => [loadInsights, loadSettings, loadMessages, loadRadio].forEach((load) => load().catch(() => {})), 2000);
+    return () => clearTimeout(id);
+  }, []);
   useInterval(
     () => {
       if (document.visibilityState !== 'visible') return; // background tabs stay idle
@@ -121,7 +136,13 @@ export default function App() {
   // that show live time call useNow() themselves.
   const ctx = useMemo(() => ({ status, live, realtime, ticks, toast }), [status, live, realtime, ticks, toast]);
   const navItem = NAV_ITEMS.find((i) => i.id === route) ?? NAV_ITEMS[0];
-  const Page = route.startsWith('settings/') ? Settings : (PAGES[route] ?? Dashboard);
+  // The same element while the route stays, so a status push (about once a second)
+  // doesn't re-render the page from the top. Pages that show live data subscribe to
+  // LiveContext themselves and still update.
+  const page = useMemo(() => {
+    const Page = route.startsWith('settings/') ? Settings : (PAGES[route] ?? Dashboard);
+    return <Page key={route} pageId={route} />;
+  }, [route]);
 
   // Unknown paths fall back to the dashboard with a matching URL.
   useEffect(() => {
@@ -135,39 +156,46 @@ export default function App() {
 
   return (
     <LiveContext.Provider value={ctx}>
-      <div className="shell">
-        <Sidebar route={navItem.id} open={menuOpen} onClose={() => setMenuOpen(false)} device={status?.collector.router?.device} />
-        <div className="shell-main">
-          <TopBar
-            title={navItem.label}
-            section={navItem.group === 'Overview' ? null : navItem.group}
-            onMenu={() => setMenuOpen(true)}
-            status={status}
-            offline={offline}
-            realtime={realtime}
-            busy={busy}
-            onAction={onAction}
-            live={live}
-            setLive={toggleLive}
-            theme={theme}
-            setTheme={setTheme}
+      <ToastContext.Provider value={toast}>
+        <div className="shell">
+          <Sidebar
+            route={navItem.id}
+            open={menuOpen}
+            onClose={() => setMenuOpen(false)}
+            device={status?.collector.router?.device}
+            features={{ smsEnabled: !!status?.smsEnabled, radioEnabled: !!status?.radioEnabled }}
+            badges={{ messages: status?.smsEnabled ? (status.smsUnread ?? 0) : 0 }}
           />
-          <main className="main">
-            <Banners status={status} busy={busy} onAction={onAction} />
-            <Suspense fallback={<div className="page-loading" aria-busy="true" />}>
-              <Page key={route} pageId={route} />
-            </Suspense>
-          </main>
-        </div>
-      </div>
-      <div className="toasts" aria-live="polite">
-        {toasts.map((t) => (
-          <div key={t.id} className={`toast toast-${t.tone}`}>
-            {t.tone === 'critical' ? <Alert size={15} /> : <Check size={15} />}
-            {t.message}
+          <div className="shell-main">
+            <TopBar
+              title={navItem.label}
+              section={navItem.group === 'Overview' ? null : navItem.group}
+              onMenu={() => setMenuOpen(true)}
+              status={status}
+              offline={offline}
+              realtime={realtime}
+              busy={busy}
+              onAction={onAction}
+              live={live}
+              setLive={toggleLive}
+              theme={theme}
+              setTheme={setTheme}
+            />
+            <main className="main">
+              <Banners status={status} busy={busy} onAction={onAction} route={navItem.id} />
+              <Suspense fallback={<PageLoader />}>{page}</Suspense>
+            </main>
           </div>
-        ))}
-      </div>
+        </div>
+        <div className="toasts" aria-live="polite">
+          {toasts.map((t) => (
+            <div key={t.id} className={`toast toast-${t.tone}`}>
+              {t.tone === 'critical' ? <Alert size={15} /> : <Check size={15} />}
+              {t.message}
+            </div>
+          ))}
+        </div>
+      </ToastContext.Provider>
     </LiveContext.Provider>
   );
 }

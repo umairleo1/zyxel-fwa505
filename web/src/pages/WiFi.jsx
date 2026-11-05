@@ -1,7 +1,7 @@
 import { api } from '../api/client.js';
 import { useAsync, useRouterData } from '../hooks/index.js';
 import { useLive } from '../app/live.js';
-import { Bool, DataTable, PageHeader, Panel, SourceNote, Stat } from '../components/ui/index.js';
+import { Bool, DataTable, PageHeader, Panel, SourceNote, Stat, PageLoader } from '../components/ui/index.js';
 import SignalBars from '../components/ui/SignalBars.jsx';
 import { wifiQuality } from '../lib/domain.js';
 
@@ -19,6 +19,7 @@ export default function WiFi() {
 
   return (
     <div className="page">
+      {!r.data && r.loading && <PageLoader />}
       <PageHeader title="Wi-Fi" subtitle="Radios, networks and connected clients, live.">
         <SourceNote fetchedAt={r.fetchedAt} stale={r.stale} onRefresh={r.reload} loading={r.loading} />
       </PageHeader>

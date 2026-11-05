@@ -314,6 +314,45 @@
   border-radius: 50%;
   animation: spin 0.7s linear infinite;
 }
+/* Ring of dots that fade in turn, for full-page loads. */
+.dot-spinner {
+  position: relative;
+  width: 96px;
+  height: 96px;
+}
+.dot-spinner > span {
+  position: absolute;
+  inset: 0;
+  transform: rotate(calc(var(--i) * 30deg));
+}
+.dot-spinner > span::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 14px;
+  height: 14px;
+  margin-left: -7px;
+  border-radius: 50%;
+  background: var(--accent);
+  opacity: 0.15;
+  animation: dot-fade 1.2s linear infinite;
+  animation-delay: calc(var(--i) * 0.1s - 1.2s);
+}
+@keyframes dot-fade {
+  0% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0.15;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dot-spinner > span::before {
+    animation-duration: 2.4s;
+    animation-delay: calc(var(--i) * 0.2s - 2.4s);
+  }
+}
 @keyframes spin {
   to {
     transform: rotate(360deg);

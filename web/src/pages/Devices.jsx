@@ -4,7 +4,7 @@ import { useAsync, useRouterData } from '../hooks/index.js';
 import { useLive } from '../app/live.js';
 import { formatFull, formatDuration, formatWhen } from '../lib/format.js';
 import { deviceEvents } from '../lib/devices.js';
-import { DataTable, KV, PageHeader, Panel, Stat, When } from '../components/ui/index.js';
+import { DataTable, KV, PageHeader, Panel, Stat, When, PageLoader } from '../components/ui/index.js';
 import Segmented from '../components/ui/Segmented.jsx';
 import { SERIES } from '../lib/domain.js';
 import SignalBars from '../components/ui/SignalBars.jsx';
@@ -111,6 +111,7 @@ export default function Devices() {
 
   return (
     <div className="page">
+      {!list.data && list.loading && <PageLoader />}
       <PageHeader
         title="Devices"
         subtitle="Everything that has joined your network, with live Wi-Fi signal and connect/disconnect history."

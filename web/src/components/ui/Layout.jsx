@@ -10,6 +10,21 @@ export function PageHeader({ title, subtitle, children }) {
   );
 }
 
+const DOTS = Array.from({ length: 12 }, (_, i) => i);
+
+// Fills the content area with a centred spinner until a page's first data arrives.
+export function PageLoader() {
+  return (
+    <div className="page-loading" role="status" aria-busy="true" aria-label="Loading">
+      <span className="dot-spinner">
+        {DOTS.map((i) => (
+          <span key={i} style={{ '--i': i }} />
+        ))}
+      </span>
+    </div>
+  );
+}
+
 export function Panel({ title, subtitle, actions, children, className = '', flush = false }) {
   return (
     <section className={`panel ${className}`}>
