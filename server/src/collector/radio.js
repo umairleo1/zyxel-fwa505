@@ -1,12 +1,13 @@
-import { findKey, scalars, toNumber } from '../lib/util.js';
+import { findKey, scalars } from '../lib/util.js';
 import { summarizeCarriers } from './carriers.js';
+import { reading } from '../lib/readings.js';
 
 /** Headline radio metrics from the router's CellIntfInfo / CellIntfZyNrNsaInfo objects. */
 export function summarizeSignal(cell, nr) {
   if (!cell) return null;
   // NetworkInUse looks like "Current_EE_NR5G-NSA_23430"
   const operator = /^Current_(.+?)_[A-Z0-9-]+_\d+$/.exec(cell.NetworkInUse ?? '')?.[1] ?? cell.NetworkInUse ?? null;
-  const nrActive = nr && nr.Enable !== false && toNumber(nr.RSRP) !== null && Number(nr.RSRP) !== 0;
+  const nrActive = nr && nr.Enable !== false && reading('rsrp', nr.RSRP) !== null && Number(nr.RSRP) !== 0;
   return {
     status: cell.Status ?? null,
     tech: cell.CurrentAccessTechnology ?? null,
@@ -17,20 +18,20 @@ export function summarizeSignal(cell, nr) {
       cellId: cell.X_ZYXEL_CellID ?? null,
       pci: cell.X_ZYXEL_PhyCellID ?? null,
       bandwidth: cell.X_ZYXEL_DownlinkBandwidth ?? null,
-      rsrp: toNumber(cell.X_ZYXEL_RSRP),
-      rsrq: toNumber(cell.X_ZYXEL_RSRQ),
-      sinr: toNumber(cell.X_ZYXEL_SINR),
-      rssi: toNumber(cell.RSSI),
+      rsrp: reading('rsrp', cell.X_ZYXEL_RSRP),
+      rsrq: reading('rsrq', cell.X_ZYXEL_RSRQ),
+      sinr: reading('sinr', cell.X_ZYXEL_SINR),
+      rssi: reading('rssi', cell.RSSI),
     },
     nr: nrActive
       ? {
           band: nr.Band ?? null,
           pci: nr.PhyCellID ?? null,
           bandwidth: nr.DownlinkBandwidth ?? null,
-          rsrp: toNumber(nr.RSRP),
-          rsrq: toNumber(nr.RSRQ),
-          sinr: toNumber(nr.SINR),
-          rssi: toNumber(nr.RSSI),
+          rsrp: reading('rsrp', nr.RSRP),
+          rsrq: reading('rsrq', nr.RSRQ),
+          sinr: reading('sinr', nr.SINR),
+          rssi: reading('rssi', nr.RSSI),
         }
       : null,
   };

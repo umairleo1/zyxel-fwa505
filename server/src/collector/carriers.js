@@ -2,6 +2,7 @@
 // Field names vary between firmware builds, so match keys by pattern.
 
 import { toNumber as num } from '../lib/util.js';
+import { reading } from '../lib/readings.js';
 const pick = (obj, ...patterns) => {
   for (const re of patterns) {
     const k = Object.keys(obj).find((key) => re.test(key));
@@ -32,10 +33,10 @@ function fromScc(item) {
     bandwidth: mhz(pick(item, /^(DL_?)?Bandwidth$/i, /Downlink_?Bandwidth/i, /DL_?BW/i, /Bandwidth/i)),
     pci: num(pick(item, /Ph(y|ysical)Cell_?ID/i, /^PCI$/i)),
     channel: num(pick(item, /RFCN/i, /^EARFCN$/i, /^ARFCN$/i, /Channel/i)),
-    rsrp: num(pick(item, /RSRP/i)),
-    rsrq: num(pick(item, /RSRQ/i)),
-    sinr: num(pick(item, /SINR/i)),
-    rssi: num(pick(item, /RSSI/i)),
+    rsrp: reading('rsrp', pick(item, /RSRP/i)),
+    rsrq: reading('rsrq', pick(item, /RSRQ/i)),
+    sinr: reading('sinr', pick(item, /SINR/i)),
+    rssi: reading('rssi', pick(item, /RSSI/i)),
   };
 }
 
@@ -57,10 +58,10 @@ export function summarizeCarriers({ cell, nr, cellwan }) {
       bandwidth: mhz(pick(cw, /INTF_.*Downlink_?Bandwidth/i) ?? cell?.X_ZYXEL_DownlinkBandwidth),
       pci: num(pick(cw, /^INTF_PhyCell_ID$/i) ?? cell?.X_ZYXEL_PhyCellID),
       channel: num(pick(cw, /^INTF_.*RFCN$/i) ?? cell?.X_ZYXEL_RFCN),
-      rsrp: num(cw.INTF_RSRP ?? cell?.X_ZYXEL_RSRP),
-      rsrq: num(cw.INTF_RSRQ ?? cell?.X_ZYXEL_RSRQ),
-      sinr: num(cw.INTF_SINR ?? cell?.X_ZYXEL_SINR),
-      rssi: num(cw.INTF_RSSI ?? cell?.RSSI),
+      rsrp: reading('rsrp', cw.INTF_RSRP ?? cell?.X_ZYXEL_RSRP),
+      rsrq: reading('rsrq', cw.INTF_RSRQ ?? cell?.X_ZYXEL_RSRQ),
+      sinr: reading('sinr', cw.INTF_SINR ?? cell?.X_ZYXEL_SINR),
+      rssi: reading('rssi', cw.INTF_RSSI ?? cell?.RSSI),
     });
   }
 
@@ -76,7 +77,7 @@ export function summarizeCarriers({ cell, nr, cellwan }) {
   }
 
   // 5G NSA leg (EN-DC)
-  const nsaRsrp = num(cw.NSA_RSRP ?? nr?.RSRP);
+  const nsaRsrp = reading('rsrp', cw.NSA_RSRP ?? nr?.RSRP);
   const nsaEnabled = (cw.NSA_Enable ?? nr?.Enable) !== false;
   const nsaBand = normBand(cw.NSA_Band ?? nr?.Band);
   if (nsaEnabled && nsaBand && nsaRsrp !== null && nsaRsrp !== 0) {
@@ -88,9 +89,9 @@ export function summarizeCarriers({ cell, nr, cellwan }) {
       pci: num(cw.NSA_PhyCellID ?? cw.NSA_PCI ?? nr?.PhyCellID),
       channel: num(cw.NSA_RFCN ?? nr?.RFCN),
       rsrp: nsaRsrp,
-      rsrq: num(cw.NSA_RSRQ ?? nr?.RSRQ),
-      sinr: num(cw.NSA_SINR ?? nr?.SINR),
-      rssi: num(cw.NSA_RSSI ?? nr?.RSSI),
+      rsrq: reading('rsrq', cw.NSA_RSRQ ?? nr?.RSRQ),
+      sinr: reading('sinr', cw.NSA_SINR ?? nr?.SINR),
+      rssi: reading('rssi', cw.NSA_RSSI ?? nr?.RSSI),
     });
   }
 
