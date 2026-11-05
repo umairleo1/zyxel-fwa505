@@ -4,8 +4,13 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
+import { decodeGsm } from '@zyxel-insight/shared/sms';
 
 const PORT = Number(process.env.MOCK_PORT || 8081);
+// MOCK_WAN_DROP=90/600: mobile data drops for 90 s out of every 600 s (the router stays
+// reachable but loses its WAN address, like a dropped PDN session). Off by default.
+const [WAN_DOWN_SEC, WAN_CYCLE_SEC] = (process.env.MOCK_WAN_DROP ?? '').split('/').map(Number);
+const wanDown = () => WAN_CYCLE_SEC > 0 && (Date.now() / 1000) % WAN_CYCLE_SEC < WAN_DOWN_SEC;
 const PASSWORD = 'mock';
 const sessions = new Set();
 const bootAt = Date.now() - 3 * 86400 * 1000;
@@ -21,6 +26,8 @@ const fixture = (pathAndQuery) => {
   return fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : null;
 };
 const clone = (o) => JSON.parse(JSON.stringify(o));
+// Band selection (cellwan_band): starts as captured, changes with PUTs.
+const band = clone(fixture('/cgi-bin/DAL?oid=cellwan_band').Object[0]);
 const counters = {
   lanRx: 377876434,
   lanTx: 621956085,
@@ -29,6 +36,7 @@ const counters = {
 };
 setInterval(() => {
   // ~4 Mbps down / 0.4 Mbps up average, bursty
+  if (wanDown()) return; // nothing moves without a connection
   const burst = Math.random() < 0.15 ? 12 : 1;
   counters.wanRx += Math.round(500_000 * burst * Math.random() * 2);
   counters.wanTx += Math.round(50_000 * burst * Math.random() * 2);
@@ -61,6 +69,86 @@ function addSystemLines(n, at = () => new Date()) {
 addSystemLines(100, (i) => new Date(Date.now() - (100 - i) * 5 * 60e3));
 security.push(`[Account] ${stamp(new Date(Date.now() - 3600_000))} httpd.notice Account admin login from 192.168.1.23`);
 setInterval(() => addSystemLines(Math.floor(Math.random() * 3)), 60_000); // ~1 line/min
+
+// ── SMS (cellwan_sms), shaped like the real router's: one list holding received (State
+// 0 unread / 1 read) and sent (State 2) messages; GSM text as unpacked hex septets. ──
+const sms = [];
+let smsSeq = 0;
+const smsStamp = (d) => {
+  const p = (n) => String(n).padStart(2, '0');
+  return `${p(d.getUTCFullYear() % 100)}/${p(d.getUTCMonth() + 1)}/${p(d.getUTCDate())},${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}+00`;
+};
+// Plain ASCII letters, digits and most punctuation sit at their ASCII codes in the GSM alphabet.
+const asciiGsm = (text) => [...text].map((c) => c.charCodeAt(0).toString(16).padStart(2, '0').toUpperCase()).join('');
+const ucs2 = (text) =>
+  Array.from({ length: text.length }, (_, i) => text.charCodeAt(i).toString(16).padStart(4, '0').toUpperCase()).join('');
+// Like the real FWA505: a multi-part text is one entry over several SIM slots, listed
+// as "6,7," (a single-part one is a plain number).
+function takeSlots(parts) {
+  const slots = Array.from({ length: Math.max(1, parts) }, () => ++smsSeq);
+  return slots.length === 1 ? slots[0] : `${slots.join(',')},`;
+}
+const slotsUsed = () => sms.reduce((n, m) => n + String(m.ObjIndex).split(',').filter(Boolean).length, 0);
+function addSms({ from, text, agoMs = 0, state = 0, unicode = false, alpha = false }) {
+  const parts = unicode ? Math.ceil(text.length / (text.length > 70 ? 67 : 70)) : Math.ceil(text.length / (text.length > 160 ? 153 : 160));
+  sms.push({
+    ObjIndex: takeSlots(parts),
+    State: state,
+    FromType: alpha ? 208 : from.startsWith('+') ? 145 : 129,
+    From: alpha ? asciiGsm(from) : from,
+    CharacterSet: unicode ? 2 : 0,
+    Content: unicode ? ucs2(text) : asciiGsm(text),
+    // The real router leaves sent messages undated.
+    TimeStamp: state === 2 ? '' : smsStamp(new Date(Date.now() - agoMs)),
+  });
+  sms.splice(0, Math.max(0, sms.length - 50)); // the SIM holds 50
+}
+addSms({ from: '+447700900123', text: 'Hi! Are you home tonight?', agoMs: 25 * 3600e3, state: 1 });
+addSms({ from: '+447700900123', text: 'Yes, after 8', agoMs: 24.8 * 3600e3, state: 2 });
+addSms({
+  from: 'EE',
+  alpha: true,
+  text: 'Your monthly allowance renews tomorrow. Text USAGE to 150 to check.',
+  agoMs: 3 * 3600e3,
+  state: 1,
+});
+addSms({ from: '+447700900456', unicode: true, text: 'Salām! Parcel arrives at 6 😀', agoMs: 20 * 60e3 });
+addSms({
+  from: 'EE',
+  alpha: true,
+  agoMs: 2 * 3600e3,
+  state: 1,
+  text: 'Your bill is ready. This month you used 3.2GB of 30GB data, 41 of unlimited minutes and 12 texts. Your next payment of 18.00 GBP will be taken on 1 December. Thanks for being with us.',
+});
+// Something new now and then, so the unread badge and live refresh can be seen working.
+setInterval(() => addSms({ from: '+447700900456', text: `Reminder ${smsSeq}: the parcel is out for delivery` }), 7 * 60e3);
+
+/** What a sent message would read as, from the parts the UI posts (UDH and fill bit removed). */
+function outboxText(o) {
+  if (o.SMS_CharacterSet === 'UCS2')
+    return { unicode: true, text: (o.SMS_Content.match(/.{4}/g) ?? []).map((h) => String.fromCharCode(parseInt(h, 16))).join('') };
+  const parts = o.SMS_Content_divData ?? [o.SMS_Content];
+  const multi = parts.length > 1;
+  const septets = parts.flatMap((hex, i) => {
+    const body = multi ? hex.slice(12) : hex;
+    const count = (o.SMS_Content_divLen?.[i] ?? 0) - (multi ? 7 : 0);
+    const bytes = (body.match(/.{2}/g) ?? []).map((h) => parseInt(h, 16));
+    const out = [];
+    for (let bit = multi ? 1 : 0; out.length < count; bit += 7) {
+      const v = ((bytes[bit >> 3] | ((bytes[(bit >> 3) + 1] ?? 0) << 8)) >> (bit & 7)) & 0x7f;
+      out.push(v);
+    }
+    return out;
+  });
+  return { unicode: false, text: decodeGsm(septets.map((v) => v.toString(16).padStart(2, '0')).join('')) };
+}
+
+const readBody = (req) =>
+  new Promise((resolve) => {
+    let b = '';
+    req.on('data', (c) => (b += c));
+    req.on('end', () => resolve(b ? JSON.parse(b) : {}));
+  });
 
 const escape = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const send = (res, status, obj, headers = {}) => {
@@ -111,6 +199,61 @@ http
       return sendEscaped(res, { 0: { Ret: 'ZCFG_SUCCESS', Oid: 'RDM_OID_LOG_CLASSIFY', Iid: url.searchParams.get('iid'), result: lines } });
     }
     const oid = url.searchParams.get('oid');
+    if (url.pathname === '/cgi-bin/DAL' && oid === 'cellwan_sms') {
+      if (req.method === 'GET') {
+        return sendEscaped(res, {
+          result: 'ZCFG_SUCCESS',
+          Object: [{ SMS_Enable: true, SMS_UsedSpace: slotsUsed(), SMS_TotalSpace: 50, SMS_Inbox: sms }],
+        });
+      }
+      // Like the real router, writes carry the session key on the URL.
+      if (!url.searchParams.get('sessionkey')) return send(res, 401, { result: 'Invalid session key' });
+      if (req.method === 'DELETE') {
+        const ids = new Set(
+          String(url.searchParams.get('objIndex') ?? '')
+            .split(',')
+            .map(Number),
+        );
+        const slotsOfEntry = (m) => String(m.ObjIndex).split(',').filter(Boolean).map(Number);
+        for (let i = sms.length - 1; i >= 0; i--) if (slotsOfEntry(sms[i]).some((n) => ids.has(n))) sms.splice(i, 1);
+        return send(res, 200, { result: 'ZCFG_SUCCESS' });
+      }
+      readBody(req).then((b) => {
+        if (req.method === 'PUT' && b.setSmsState === 1) {
+          const m = sms.find((x) => x.ObjIndex === b.SMS_InboxObjId);
+          if (m && m.State === 0) m.State = 1;
+        } else if (req.method === 'POST') {
+          const { text, unicode } = outboxText(b);
+          sms.push({
+            ObjIndex: takeSlots((b.SMS_Content_divData ?? [b.SMS_Content]).length),
+            State: 2,
+            FromType: 129,
+            From: b.SMS_To,
+            CharacterSet: unicode ? 2 : 1,
+            Content: unicode ? ucs2(text) : text,
+            TimeStamp: '', // like the real FWA505: sent messages carry no time
+          });
+          console.log(`[mock] SMS to ${b.SMS_To}: ${JSON.stringify(text)}`);
+        }
+        // Sending takes the modem a moment.
+        setTimeout(() => send(res, 200, { result: 'ZCFG_SUCCESS' }), req.method === 'POST' ? 800 : 100);
+      });
+      return;
+    }
+    if (url.pathname === '/cgi-bin/DAL' && oid === 'cellwan_band') {
+      if (req.method === 'GET') return sendEscaped(res, { result: 'ZCFG_SUCCESS', Object: [band] });
+      if (req.method !== 'PUT' || !url.searchParams.get('sessionkey')) return send(res, 401, { result: 'Invalid session key' });
+      readBody(req).then((b) => {
+        band.INTF_Preferred_Access_Technology = b.INTF_Preferred_Access_Technology ?? band.INTF_Preferred_Access_Technology;
+        band.INTF_Preferred_Bands = b.INTF_Preferred_Bands ?? band.INTF_Preferred_Bands;
+        // Re-registers on the first allowed LTE band, like a modem picking a new anchor.
+        const allowed = band.INTF_Preferred_Bands === 'Auto' ? ['B7'] : band.INTF_Preferred_Bands.split(',');
+        band.INTF_Current_Band = allowed.includes('B7') ? 'B7' : (allowed.find((x) => x.startsWith('B')) ?? band.INTF_Current_Band);
+        console.log(`[mock] band selection: ${band.INTF_Preferred_Access_Technology} / ${band.INTF_Preferred_Bands}`);
+        setTimeout(() => send(res, 200, { result: 'ZCFG_SUCCESS' }), 600);
+      });
+      return;
+    }
     if (url.pathname === '/cgi-bin/DAL' && oid === 'cellwan_status') {
       const d = clone(fixture('/cgi-bin/DAL?oid=cellwan_status'));
       const o = d.Object[0];
@@ -133,6 +276,11 @@ http
       o.DeviceInfo.UpTime = Math.floor((Date.now() - bootAt) / 1000);
       o.ProcessStatus.CPUUsage = Math.max(1, 4 + jitter(3));
       o.MemoryStatus.Free = 321244 + jitter(20000);
+      o.SMSInfo = [{ InBoxStatus: 0, SMSNew: sms.some((m) => m.State === 0) }];
+      if (wanDown()) {
+        const wan = o.WanLanInfo.find((w) => w.X_ZYXEL_DefaultGatewayIface);
+        Object.assign(wan, { Status: 'Down', IPv4Address: [], IPv6Address: [] });
+      }
       return send(res, 200, d);
     }
     if (url.pathname === '/cgi-bin/DAL' && oid === 'Traffic_Status') {
