@@ -2,8 +2,9 @@ import { useState } from 'react';
 import { safeStorage } from '../../lib/storage.js';
 import { Alert, Info, X } from '../ui/Icons.jsx';
 import { When } from '../ui/Time.jsx';
+import { Link } from '../../app/route.jsx';
 
-export default function Banners({ status, busy, onAction }) {
+export default function Banners({ status, busy, onAction, route }) {
   const [hintHidden, setHidden] = useState(() => safeStorage.get('insight.hideSetupHint') === '1');
   if (!status) return null;
   const { collector: c, syslog: s } = status;
@@ -36,6 +37,35 @@ export default function Banners({ status, busy, onAction }) {
             </span>
           )}
         </div>
+      </div>,
+    );
+  }
+
+  // Only while the router answers: when it doesn't, the banner above already says so.
+  const wan = c.router?.wan;
+  if (c.phase === 'ok' && wan?.since) {
+    banners.push(
+      <div key="wan" className="banner banner-warning" role="status">
+        <Alert />
+        <div>
+          <strong>No mobile data.</strong> The router is up, but its internet connection has been down since <When ts={wan.since} />.
+          {wan.reason && <span className="banner-detail">{wan.reason}</span>}
+        </div>
+      </div>,
+    );
+  }
+
+  // A band selection on trial, shown on every page (the Radio page has its own): it reverts by itself unless kept.
+  if (status.radioTrial && route !== 'radio') {
+    banners.push(
+      <div key="radio" className="banner banner-info" role="status">
+        <Info />
+        <div>
+          <strong>Trying new band settings.</strong> They switch back at <When ts={status.radioTrial.until} seconds /> unless you keep them.
+        </div>
+        <Link to="/radio" className="btn">
+          Review
+        </Link>
       </div>,
     );
   }

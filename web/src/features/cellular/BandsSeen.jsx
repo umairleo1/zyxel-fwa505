@@ -60,20 +60,20 @@ export default function BandsSeen({ bands, active, loading }) {
           },
           {
             key: 'session',
-            label: 'Connected for',
+            label: 'This session',
             align: 'right',
             render: (b) => (
               <span
                 className="nowrap"
                 title={`Total on this band: ${formatDuration(b.seconds)} (as primary / 5G anchor: ${formatDuration(b.primarySeconds)})`}
               >
-                {b.runStart == null ? '—' : inUse(b) ? minutes((now - b.runStart) / 1000) : `lasted ${minutes(b.lastRunSeconds)}`}
+                {b.runStart == null ? '—' : inUse(b) ? minutes((now - b.runStart) / 1000) : `ended after ${minutes(b.lastRunSeconds)}`}
               </span>
             ),
           },
           {
             key: 'bestRsrp',
-            label: 'Best RSRP',
+            label: 'Strongest RSRP',
             render: (b) => <Reading value={b.bestRsrp} unit="dBm" quality={rsrpQuality(b.bestRsrp)} />,
           },
           {

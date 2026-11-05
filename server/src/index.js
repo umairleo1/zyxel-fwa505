@@ -15,6 +15,9 @@ import { createStatus } from './status.js';
 import { createApp } from './http/app.js';
 import { isLoopback, liveAllowedHostnames } from './http/security.js';
 import { createSourceFilter, defaultSources } from './ingest/guard.js';
+import { createSmsService } from './sms/service.js';
+import { createRadioService } from './radio/service.js';
+import { findKey } from './lib/util.js';
 
 if (!config.routerPassword) {
   console.error('ROUTER_PASSWORD is not set. Copy .env.example to .env and fill it in.');
@@ -39,7 +42,26 @@ const client = new RouterClient({
   password: config.routerPassword,
   // Trust-on-first-use pin of the router's self-signed certificate, kept across restarts.
   certPin: { get: () => db.getMeta('routerCertSha256'), set: (fp) => db.setMeta('routerCertSha256', fp) },
+  allowSms: config.smsEnabled,
+  allowBandSelection: config.radioControlEnabled,
 });
+// collector is created below; isReady only runs once the service is started.
+const sms = createSmsService({
+  client,
+  db,
+  enabled: config.smsEnabled,
+  // Only while the router is being read and someone has Insight open: no one to show a badge to otherwise.
+  isReady: () => collector.state.phase === 'ok' && hub.size > 0,
+  // The router has a field for the SIM's own number, but most SIMs leave it empty.
+  simNumber: async () => {
+    const live = collector.state.router?.cellwan?.USIM_MSISDN;
+    if (live) return live;
+    const info = await routerData.raw('cardpage_status', 3600e3);
+    return findKey(info.data, 'CellIntfSimfInfo')?.MSISDN || null;
+  },
+  onUnread: () => pushStatus(),
+});
+const radio = createRadioService({ client, db, enabled: config.radioControlEnabled, onChange: () => pushStatus() });
 const collector = new Collector({ client, db, pollIntervalSec: config.pollIntervalSec, statusIntervalSec: config.statusIntervalSec });
 const routerData = createRouterData({ client, collector });
 // Only the router (plus loopback) may feed the log, unless INGEST_ALLOWED_SOURCES says otherwise.
@@ -55,13 +77,15 @@ const snmp = startSnmpTraps({
   onTrap: () => collector.pollNow(),
 });
 const samplers = startSamplers({ routerData, db, emit: (what) => hub.broadcast(what, { at: Date.now() }) });
-const statusPayload = createStatus({ config, collector, syslog, snmp, client });
+const statusPayload = createStatus({ config, collector, syslog, snmp, client, sms, radio });
 
 // Status changes on every poll and every syslog/trap packet: push at most once per second.
 const pushStatus = hub.throttled('status', statusPayload, 1000);
 collector.on('change', pushStatus);
 hub.onLogs(pushStatus);
 collector.start();
+sms.start();
+radio.start();
 
 // Retention: trim old rows shortly after start, then hourly.
 function prune() {
@@ -136,6 +160,8 @@ const app = createApp({
   hub,
   collector,
   routerData,
+  sms: config.smsEnabled ? sms : null,
+  radio: config.radioControlEnabled ? radio : null,
   statusPayload,
   statusIntervalSec: config.statusIntervalSec,
   security: {
@@ -174,6 +200,8 @@ async function shutdown(code = 0) {
     syslog.close();
     snmp.close();
     samplers.stop();
+    sms.stop();
+    radio.stop();
     await collector.stop();
     db.close();
   } catch (e) {

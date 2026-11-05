@@ -6,6 +6,8 @@ import { telemetryRoutes } from './routes/telemetry.js';
 import { routerDataRoutes } from './routes/routerData.js';
 import { insightsRoutes } from './routes/insights.js';
 import { liveRoutes } from './routes/live.js';
+import { smsRoutes } from './routes/sms.js';
+import { radioRoutes } from './routes/radio.js';
 import { basicAuth, csrfGuard, hostGuard, isLoopback, liveAllowedHostnames, securityHeaders } from './security.js';
 
 /**
@@ -37,6 +39,8 @@ export function createApp(deps) {
   api.use(routerDataRoutes(deps));
   api.use(insightsRoutes(deps));
   api.use(liveRoutes(deps));
+  api.use(smsRoutes(deps));
+  api.use(radioRoutes(deps));
   api.use((_req, res) => res.status(404).json({ error: 'Not found' }));
   app.use('/api', api);
 

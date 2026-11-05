@@ -1,12 +1,16 @@
 import * as I from '../components/ui/Icons.jsx';
 
 // Sidebar structure. "settings" pages mirror the router's admin menu, read-only.
+// `requires` hides an item unless the server reports that feature (status.smsEnabled, status.radioEnabled).
 export const NAV = [
   {
     group: 'Overview',
     items: [
       { id: 'dashboard', label: 'Dashboard', icon: I.Grid },
       { id: 'insights', label: 'Insights', icon: I.Sparkle },
+      // The only pages that write to the router: SMS, and the preferred network mode and bands.
+      { id: 'messages', label: 'Messages', icon: I.Message, requires: 'smsEnabled' },
+      { id: 'radio', label: 'Radio control', icon: I.Sliders, requires: 'radioEnabled' },
     ],
   },
   {

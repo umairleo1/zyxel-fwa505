@@ -4,7 +4,7 @@ import { useAsync, useRouterData } from '../hooks/index.js';
 import { useLive } from '../app/live.js';
 import { formatDuration, formatFull, formatSigned } from '../lib/format.js';
 import { rsrpQuality, rangeOptions } from '../lib/domain.js';
-import { KV, PageHeader, Panel, SourceNote, Stat } from '../components/ui/index.js';
+import { KV, PageHeader, Panel, SourceNote, Stat, PageLoader } from '../components/ui/index.js';
 import Segmented from '../components/ui/Segmented.jsx';
 import Carriers from '../features/cellular/Carriers.jsx';
 import SignalChart from '../features/cellular/SignalChart.jsx';
@@ -34,6 +34,7 @@ export default function Cellular() {
 
   return (
     <div className="page">
+      {!r.data && r.loading && <PageLoader />}
       <PageHeader
         title="Cellular"
         subtitle={

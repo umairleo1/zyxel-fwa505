@@ -187,3 +187,89 @@ test('a router presenting a different certificate never receives the password', 
   server.close();
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+/** Fake router that records every request; replies ZCFG_SUCCESS (or drops the socket when told). */
+async function recordingRouter({ drop = false } = {}) {
+  const seen = [];
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => (body += c));
+    req.on('end', () => {
+      seen.push({ method: req.method, url: req.url, body: body ? JSON.parse(body) : null });
+      if (drop) return req.socket.destroy();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ result: 'ZCFG_SUCCESS' }));
+    });
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  return { seen, url: `http://127.0.0.1:${server.address().port}`, close: () => server.close() };
+}
+
+test('SMS writes are refused unless enabled', async (t) => {
+  const r = await recordingRouter();
+  t.after(r.close);
+  const client = new RouterClient({ baseUrl: r.url, username: 'a', password: 'b' });
+  client.sessionKey = 'k';
+  await assert.rejects(client.smsWrite('POST', { body: { SMS_To: '1' } }), /disabled/);
+  assert.equal(r.seen.length, 0);
+});
+
+test('an SMS send goes to cellwan_sms with the session key, as the router UI sends it', async (t) => {
+  const r = await recordingRouter();
+  t.after(r.close);
+  const client = new RouterClient({ baseUrl: r.url, username: 'a', password: 'b', allowSms: true, requestGapMs: 0 });
+  client.sessionKey = 'k1';
+  await client.smsWrite('POST', { query: { timedelay: 1 }, body: { SMS_To: '447700900123' } });
+  await client.smsWrite('DELETE', { query: { objIndex: '3,4' } });
+  assert.deepEqual(
+    r.seen.map((s) => [s.method, s.url, s.body]),
+    [
+      ['POST', '/cgi-bin/DAL?oid=cellwan_sms&timedelay=1&sessionkey=k1', { SMS_To: '447700900123' }],
+      ['DELETE', '/cgi-bin/DAL?oid=cellwan_sms&objIndex=3%2C4&sessionkey=k1', null],
+    ],
+  );
+});
+
+test('the SMS exception cannot be pointed at anything else', async (t) => {
+  const r = await recordingRouter();
+  t.after(r.close);
+  const client = new RouterClient({ baseUrl: r.url, username: 'a', password: 'b', allowSms: true, requestGapMs: 0 });
+  client.sessionKey = 'k';
+  await assert.rejects(client.smsWrite('PUT', { query: { oid: 'firewall' } }), /read-only/);
+  await assert.rejects(client.smsWrite('POST', { query: { action: 'DEL_LOG' } }), /read-only/);
+  await assert.rejects(client.smsWrite('PATCH'), /read-only/);
+  assert.equal(r.seen.length, 0, 'nothing reached the router');
+});
+
+test('a dropped connection during an SMS send is not retried (it could send twice)', async (t) => {
+  const r = await recordingRouter({ drop: true });
+  t.after(r.close);
+  const client = new RouterClient({ baseUrl: r.url, username: 'a', password: 'b', allowSms: true, requestGapMs: 0 });
+  client.sessionKey = 'k';
+  await assert.rejects(client.smsWrite('POST', { body: {} }), /socket hang up|ECONNRESET/);
+  assert.equal(r.seen.length, 1);
+});
+
+test('band selection writes are refused unless enabled', async (t) => {
+  const r = await recordingRouter();
+  t.after(r.close);
+  const client = new RouterClient({ baseUrl: r.url, username: 'a', password: 'b', allowSms: true });
+  client.sessionKey = 'k';
+  await assert.rejects(client.bandWrite({ INTF_Preferred_Bands: 'B3,n78' }), /disabled/);
+  assert.equal(r.seen.length, 0);
+});
+
+test('a band selection is a PUT to cellwan_band and nothing else', async (t) => {
+  const r = await recordingRouter();
+  t.after(r.close);
+  const client = new RouterClient({ baseUrl: r.url, username: 'a', password: 'b', allowBandSelection: true, requestGapMs: 0 });
+  client.sessionKey = 'k1';
+  await client.bandWrite({ INTF_Preferred_Bands: 'B3,n78' });
+  assert.deepEqual(
+    r.seen.map((s) => [s.method, s.url, s.body]),
+    [['PUT', '/cgi-bin/DAL?oid=cellwan_band&sessionkey=k1', { INTF_Preferred_Bands: 'B3,n78' }]],
+  );
+  // Enabling band control doesn't open SMS, or any other setting.
+  await assert.rejects(client.smsWrite('POST', { body: {} }), /disabled/);
+  assert.equal(r.seen.length, 1);
+});

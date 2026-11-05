@@ -4,6 +4,8 @@
   "type": "module",
   "exports": {
     "./quality": "./quality.js",
-    "./severity": "./severity.js"
+    "./radio": "./radio.js",
+    "./severity": "./severity.js",
+    "./sms": "./sms.js"
   }
 }

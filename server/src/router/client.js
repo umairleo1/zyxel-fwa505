@@ -14,6 +14,11 @@ const SESSION_CONFLICT_BACKOFF_MS = 5 * 60_000;
 const BAD_PASSWORD = /passw|incorrect|invalid|wrong|locked|denied|fail/i;
 // Idle time between back-to-back requests, so the router's own admin page gets a turn.
 const REQUEST_GAP_MS = 250;
+// The SMS write path (see #isSmsWrite): these methods, and only these query parameters.
+const SMS_METHODS = new Set(['POST', 'PUT', 'DELETE']);
+const SMS_PARAMS = new Set(['oid', 'sessionkey', 'timedelay', 'objIndex']);
+// The band-selection write path (see #isBandWrite): a PUT with nothing but these on the URL.
+const BAND_PARAMS = new Set(['oid', 'sessionkey']);
 
 export class RouterError extends Error {
   /** kind: network | auth | duplicate | max-sessions | session | http | tls | paused */
@@ -82,17 +87,30 @@ function trim(list, timeOf, now) {
 }
 
 /**
- * Read-only client for the FWA505 web API. The only non-GET calls it will
- * make are login and logout; everything else is refused.
+ * Read-only client for the FWA505 web API. The only non-GET calls it will make are
+ * login, logout and, when enabled, SMS (cellwan_sms) and band selection (cellwan_band);
+ * everything else is refused.
  */
 export class RouterClient {
   /**
    * certPin: { get(), set(sha256) } store for the router's TLS certificate
    * fingerprint (trust on first use). Defaults to memory only.
    */
-  constructor({ baseUrl, username, password, requestGapMs = REQUEST_GAP_MS, certPin = memoryPin() }) {
+  constructor({
+    baseUrl,
+    username,
+    password,
+    requestGapMs = REQUEST_GAP_MS,
+    certPin = memoryPin(),
+    allowSms = false,
+    allowBandSelection = false,
+  }) {
     this.base = new URL(baseUrl);
     this.mod = this.base.protocol === 'https:' ? https : http;
+    // The exceptions to read-only, each only when enabled: SMS writes (see #isSmsWrite)
+    // and the band selection (see #isBandWrite).
+    this.allowSms = allowSms;
+    this.allowBandSelection = allowBandSelection;
     // No keep-alive: the router drops idle connections between our polls, and
     // reusing a dead socket fails with "socket hang up".
     this.agent = new this.mod.Agent({ keepAlive: false, rejectUnauthorized: false });
@@ -349,6 +367,79 @@ export class RouterClient {
     return data;
   }
 
+  /**
+   * The one write Insight makes, and only when enabled: SMS on the router's own
+   * cellwan_sms endpoint (send = POST, mark read = PUT, delete = DELETE). Any other
+   * path, or this one with any other oid, stays refused.
+   */
+  #isSmsWrite(method, url) {
+    return (
+      this.allowSms &&
+      SMS_METHODS.has(method) &&
+      url.pathname === '/cgi-bin/DAL' &&
+      [...url.searchParams.keys()].every((k) => SMS_PARAMS.has(k)) &&
+      url.searchParams.getAll('oid').length === 1 &&
+      url.searchParams.get('oid') === 'cellwan_sms'
+    );
+  }
+
+  /**
+   * The other write, also only when enabled: the preferred access technology and bands
+   * on cellwan_band, PUT as the router's own Broadband → Band page does. Nothing else on
+   * the URL, so it can't be pointed at another setting.
+   */
+  #isBandWrite(method, url) {
+    return (
+      this.allowBandSelection &&
+      method === 'PUT' &&
+      url.pathname === '/cgi-bin/DAL' &&
+      [...url.searchParams.keys()].every((k) => BAND_PARAMS.has(k)) &&
+      url.searchParams.getAll('oid').length === 1 &&
+      url.searchParams.get('oid') === 'cellwan_band'
+    );
+  }
+
+  /**
+   * An SMS write, as the router's UI sends it: session key (and `query`) on the URL,
+   * `body` as JSON. High priority, never retried (a resend could send a text twice).
+   * Resolves to the router's reply; anything but ZCFG_SUCCESS throws.
+   */
+  smsWrite(method, { query = {}, body } = {}) {
+    return this.#serial(async () => {
+      if (!this.allowSms) throw new RouterError('http', 'SMS is disabled (SMS_ENABLED=false)');
+      return this.#dalWrite('SMS', method, { oid: 'cellwan_sms', ...query }, body);
+    }, 'high');
+  }
+
+  /** Save the band selection: `body` is the whole cellwan_band object, as read, with the changes. */
+  bandWrite(body) {
+    return this.#serial(async () => {
+      if (!this.allowBandSelection) throw new RouterError('http', 'Band control is disabled (RADIO_CONTROL_ENABLED=false)');
+      return this.#dalWrite('Band selection', 'PUT', { oid: 'cellwan_band' }, body);
+    }, 'high');
+  }
+
+  async #dalWrite(label, method, query, body) {
+    if (this.suspended) throw this.#paused();
+    if (!this.hasSession) await this.#login();
+    const send = () => {
+      const q = new URLSearchParams({ ...query, sessionkey: this.sessionKey });
+      return this.#send(method, `/cgi-bin/DAL?${q}`, body);
+    };
+    let res = await send();
+    if (res.status === 401 || res.status === 403) {
+      // The write was refused, not performed, so it's safe to log in and try once more.
+      await this.#login();
+      res = await send();
+    }
+    const data = tryJson(res.text);
+    if (res.status !== 200 || !data) throw new RouterError('http', `${label} ${method}: HTTP ${res.status}`, res.status);
+    if (data.result !== 'ZCFG_SUCCESS') {
+      throw new RouterError('http', `${label} ${method} refused by the router: ${data.ReplyMsg || data.result || 'unknown error'}`);
+    }
+    return data;
+  }
+
   /** Lines of the router's native log. type: 'system' | 'security'. */
   async getLog(type) {
     const iid = type === 'security' ? '[2,0,0,0,0,0]' : '[1,0,0,0,0,0]';
@@ -401,7 +492,12 @@ export class RouterClient {
 
   #sendRaw(method, path, json) {
     const url = new URL(path, this.base);
-    const allowed = method === 'GET' || path === '/UserLogin' || url.pathname === '/cgi-bin/UserLogout';
+    const allowed =
+      method === 'GET' ||
+      path === '/UserLogin' ||
+      url.pathname === '/cgi-bin/UserLogout' ||
+      this.#isSmsWrite(method, url) ||
+      this.#isBandWrite(method, url);
     if (!allowed || /DEL_LOG/i.test(url.search)) {
       return Promise.reject(new Error(`Refusing ${method} ${url.pathname}${url.search}: Insight is read-only`));
     }
