@@ -19,6 +19,8 @@ const SMS_METHODS = new Set(['POST', 'PUT', 'DELETE']);
 const SMS_PARAMS = new Set(['oid', 'sessionkey', 'timedelay', 'objIndex']);
 // The band-selection write path (see #isBandWrite): a PUT with nothing but these on the URL.
 const BAND_PARAMS = new Set(['oid', 'sessionkey']);
+// The restart path (see #isRebootWrite): what the router's Maintenance → Reboot page POSTs.
+const REBOOT_PATH = '/cgi-bin/Reboot';
 
 export class RouterError extends Error {
   /** kind: network | auth | duplicate | max-sessions | session | http | tls | paused */
@@ -104,13 +106,15 @@ export class RouterClient {
     certPin = memoryPin(),
     allowSms = false,
     allowBandSelection = false,
+    allowReboot = false,
   }) {
     this.base = new URL(baseUrl);
     this.mod = this.base.protocol === 'https:' ? https : http;
-    // The exceptions to read-only, each only when enabled: SMS writes (see #isSmsWrite)
-    // and the band selection (see #isBandWrite).
+    // The exceptions to read-only, each only when enabled: SMS writes (see #isSmsWrite),
+    // the band selection (see #isBandWrite) and a restart (see #isRebootWrite).
     this.allowSms = allowSms;
     this.allowBandSelection = allowBandSelection;
+    this.allowReboot = allowReboot;
     // No keep-alive: the router drops idle connections between our polls, and
     // reusing a dead socket fails with "socket hang up".
     this.agent = new this.mod.Agent({ keepAlive: false, rejectUnauthorized: false });
@@ -399,6 +403,17 @@ export class RouterClient {
     );
   }
 
+  /** The third write, also only when enabled: a restart, a POST with the session key and nothing else. */
+  #isRebootWrite(method, url) {
+    return (
+      this.allowReboot &&
+      method === 'POST' &&
+      url.pathname === REBOOT_PATH &&
+      [...url.searchParams.keys()].every((k) => k === 'sessionkey') &&
+      url.searchParams.getAll('sessionkey').length === 1
+    );
+  }
+
   /**
    * An SMS write, as the router's UI sends it: session key (and `query`) on the URL,
    * `body` as JSON. High priority, never retried (a resend could send a text twice).
@@ -416,6 +431,34 @@ export class RouterClient {
     return this.#serial(async () => {
       if (!this.allowBandSelection) throw new RouterError('http', 'Band control is disabled (RADIO_CONTROL_ENABLED=false)');
       return this.#dalWrite('Band selection', 'PUT', { oid: 'cellwan_band' }, body);
+    }, 'high');
+  }
+
+  /**
+   * Restart the router, as its Maintenance → Reboot page does. High priority, and never
+   * retried on a dropped connection: the router may already be going down. Its session
+   * ends with the restart, so it's dropped here and the next request logs in afresh.
+   */
+  reboot() {
+    return this.#serial(async () => {
+      if (!this.allowReboot) throw new RouterError('http', 'Restart is disabled (REBOOT_ENABLED=false)');
+      if (this.suspended) throw this.#paused();
+      if (!this.hasSession) await this.#login();
+      const send = () => this.#send('POST', `${REBOOT_PATH}?${new URLSearchParams({ sessionkey: this.sessionKey })}`);
+      let res = await send();
+      if (res.status === 401 || res.status === 403) {
+        // Refused, not performed: safe to log in and ask once more.
+        await this.#login();
+        res = await send();
+      }
+      const data = tryJson(res.text);
+      if (res.status !== 200) throw new RouterError('http', `Restart: HTTP ${res.status}`, res.status);
+      if (data?.result && data.result !== 'ZCFG_SUCCESS') {
+        throw new RouterError('http', `Restart refused by the router: ${data.ReplyMsg || data.result}`);
+      }
+      this.sessionKey = null;
+      this.cookies.clear();
+      return data ?? {};
     }, 'high');
   }
 
@@ -497,7 +540,8 @@ export class RouterClient {
       path === '/UserLogin' ||
       url.pathname === '/cgi-bin/UserLogout' ||
       this.#isSmsWrite(method, url) ||
-      this.#isBandWrite(method, url);
+      this.#isBandWrite(method, url) ||
+      this.#isRebootWrite(method, url);
     if (!allowed || /DEL_LOG/i.test(url.search)) {
       return Promise.reject(new Error(`Refusing ${method} ${url.pathname}${url.search}: Insight is read-only`));
     }

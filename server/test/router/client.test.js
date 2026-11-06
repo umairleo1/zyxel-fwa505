@@ -273,3 +273,37 @@ test('a band selection is a PUT to cellwan_band and nothing else', async (t) => 
   await assert.rejects(client.smsWrite('POST', { body: {} }), /disabled/);
   assert.equal(r.seen.length, 1);
 });
+
+test('a restart is refused unless enabled', async (t) => {
+  const r = await recordingRouter();
+  t.after(r.close);
+  const client = new RouterClient({ baseUrl: r.url, username: 'a', password: 'b', allowSms: true, allowBandSelection: true });
+  client.sessionKey = 'k';
+  await assert.rejects(client.reboot(), /disabled/);
+  assert.equal(r.seen.length, 0);
+});
+
+test('a restart is a POST to /cgi-bin/Reboot with only the session key, and ends the session', async (t) => {
+  const r = await recordingRouter();
+  t.after(r.close);
+  const client = new RouterClient({ baseUrl: r.url, username: 'a', password: 'b', allowReboot: true, requestGapMs: 0 });
+  client.sessionKey = 'k1';
+  await client.reboot();
+  assert.deepEqual(
+    r.seen.map((s) => [s.method, s.url, s.body]),
+    [['POST', '/cgi-bin/Reboot?sessionkey=k1', null]],
+  );
+  assert.equal(client.hasSession, false);
+  // Enabling restart opens nothing else.
+  await assert.rejects(client.bandWrite({}), /disabled/);
+  await assert.rejects(client.smsWrite('POST', { body: {} }), /disabled/);
+});
+
+test('a dropped connection during a restart is not retried', async (t) => {
+  const r = await recordingRouter({ drop: true });
+  t.after(r.close);
+  const client = new RouterClient({ baseUrl: r.url, username: 'a', password: 'b', allowReboot: true, requestGapMs: 0 });
+  client.sessionKey = 'k';
+  await assert.rejects(client.reboot(), /socket hang up|ECONNRESET/);
+  assert.equal(r.seen.length, 1);
+});
