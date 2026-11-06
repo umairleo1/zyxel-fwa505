@@ -24,6 +24,17 @@ const normBand = (b) => {
 };
 const ratOf = (band) => (band && band.startsWith('n') ? 'NR' : 'LTE');
 
+/**
+ * A carrier's signal readings, taken as one measurement. When the modem sends RSRP but as a
+ * filler (-140, -128…), it didn't measure that carrier and the rest of the row is filler too
+ * (seen on an LTE SCC: RSRP -140, RSSI -120, RSRQ -20, SINR 10), so none of it is shown.
+ */
+function measurement({ rsrp, rsrq, sinr, rssi }) {
+  const r = reading('rsrp', rsrp);
+  if (r === null && num(rsrp) !== null) return { rsrp: null, rsrq: null, sinr: null, rssi: null, measured: false };
+  return { rsrp: r, rsrq: reading('rsrq', rsrq), sinr: reading('sinr', sinr), rssi: reading('rssi', rssi), measured: true };
+}
+
 function fromScc(item) {
   const band = normBand(pick(item, /^Band$/i, /Band$/i));
   return {
@@ -33,10 +44,12 @@ function fromScc(item) {
     bandwidth: mhz(pick(item, /^(DL_?)?Bandwidth$/i, /Downlink_?Bandwidth/i, /DL_?BW/i, /Bandwidth/i)),
     pci: num(pick(item, /Ph(y|ysical)Cell_?ID/i, /^PCI$/i)),
     channel: num(pick(item, /RFCN/i, /^EARFCN$/i, /^ARFCN$/i, /Channel/i)),
-    rsrp: reading('rsrp', pick(item, /RSRP/i)),
-    rsrq: reading('rsrq', pick(item, /RSRQ/i)),
-    sinr: reading('sinr', pick(item, /SINR/i)),
-    rssi: reading('rssi', pick(item, /RSSI/i)),
+    ...measurement({
+      rsrp: pick(item, /RSRP/i),
+      rsrq: pick(item, /RSRQ/i),
+      sinr: pick(item, /SINR/i),
+      rssi: pick(item, /RSSI/i),
+    }),
   };
 }
 
@@ -58,10 +71,12 @@ export function summarizeCarriers({ cell, nr, cellwan }) {
       bandwidth: mhz(pick(cw, /INTF_.*Downlink_?Bandwidth/i) ?? cell?.X_ZYXEL_DownlinkBandwidth),
       pci: num(pick(cw, /^INTF_PhyCell_ID$/i) ?? cell?.X_ZYXEL_PhyCellID),
       channel: num(pick(cw, /^INTF_.*RFCN$/i) ?? cell?.X_ZYXEL_RFCN),
-      rsrp: reading('rsrp', cw.INTF_RSRP ?? cell?.X_ZYXEL_RSRP),
-      rsrq: reading('rsrq', cw.INTF_RSRQ ?? cell?.X_ZYXEL_RSRQ),
-      sinr: reading('sinr', cw.INTF_SINR ?? cell?.X_ZYXEL_SINR),
-      rssi: reading('rssi', cw.INTF_RSSI ?? cell?.RSSI),
+      ...measurement({
+        rsrp: cw.INTF_RSRP ?? cell?.X_ZYXEL_RSRP,
+        rsrq: cw.INTF_RSRQ ?? cell?.X_ZYXEL_RSRQ,
+        sinr: cw.INTF_SINR ?? cell?.X_ZYXEL_SINR,
+        rssi: cw.INTF_RSSI ?? cell?.RSSI,
+      }),
     });
   }
 
@@ -88,10 +103,7 @@ export function summarizeCarriers({ cell, nr, cellwan }) {
       bandwidth: mhz(cw.NSA_DownlinkBandwidth ?? nr?.DownlinkBandwidth),
       pci: num(cw.NSA_PhyCellID ?? cw.NSA_PCI ?? nr?.PhyCellID),
       channel: num(cw.NSA_RFCN ?? nr?.RFCN),
-      rsrp: nsaRsrp,
-      rsrq: reading('rsrq', cw.NSA_RSRQ ?? nr?.RSRQ),
-      sinr: reading('sinr', cw.NSA_SINR ?? nr?.SINR),
-      rssi: reading('rssi', cw.NSA_RSSI ?? nr?.RSSI),
+      ...measurement({ rsrp: nsaRsrp, rsrq: cw.NSA_RSRQ ?? nr?.RSRQ, sinr: cw.NSA_SINR ?? nr?.SINR, rssi: cw.NSA_RSSI ?? nr?.RSSI }),
     });
   }
 

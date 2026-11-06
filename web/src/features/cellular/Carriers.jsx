@@ -7,6 +7,12 @@ const ROLE = {
   'nr-anchor': () => '5G NSA leg',
 };
 const color = (c) => (c.rat === 'NR' ? SERIES.nr.color : SERIES.lte.color);
+const NOT_MEASURED = "Not measured: the router doesn't report signal for this carrier";
+const NotMeasured = () => (
+  <span className="muted" title={NOT_MEASURED} aria-label={NOT_MEASURED}>
+    —*
+  </span>
+);
 
 export default function Carriers({ ca }) {
   if (!ca?.carriers?.length) return null;
@@ -14,6 +20,7 @@ export default function Carriers({ ca }) {
   const sized = carriers.filter((c) => c.bandwidth);
   const lte = carriers.filter((c) => c.rat === 'LTE').length;
   const nr = carriers.length - lte;
+  const anyUnmeasured = carriers.some((c) => c.measured === false);
 
   return (
     <section className="panel" aria-label="Active carriers">
@@ -95,20 +102,37 @@ export default function Carriers({ ca }) {
                 <td className="num">{c.bandwidth ? `${c.bandwidth} MHz` : '—'}</td>
                 <td className="num mono">{c.pci ?? '—'}</td>
                 <td className="num mono">{c.channel ?? '—'}</td>
-                <td>
-                  <Reading value={c.rsrp} unit="dBm" quality={rsrpQuality(c.rsrp)} />
-                </td>
-                <td>
-                  <Reading value={c.rsrq} unit="dB" />
-                </td>
-                <td>
-                  <Reading value={c.sinr} unit="dB" quality={sinrQuality(c.sinr)} />
-                </td>
+                {c.measured === false ? (
+                  <>
+                    <td>
+                      <NotMeasured />
+                    </td>
+                    <td>
+                      <NotMeasured />
+                    </td>
+                    <td>
+                      <NotMeasured />
+                    </td>
+                  </>
+                ) : (
+                  <>
+                    <td>
+                      <Reading value={c.rsrp} unit="dBm" quality={rsrpQuality(c.rsrp)} />
+                    </td>
+                    <td>
+                      <Reading value={c.rsrq} unit="dB" />
+                    </td>
+                    <td>
+                      <Reading value={c.sinr} unit="dB" quality={sinrQuality(c.sinr)} />
+                    </td>
+                  </>
+                )}
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+      {anyUnmeasured && <p className="muted small">* {NOT_MEASURED}.</p>}
     </section>
   );
 }

@@ -112,6 +112,35 @@ test('matches the real FWA505 SCC_Info shape (PhysicalCellID, padding rows)', ()
   assert.equal(s.carriers[0].channel, 3350);
 });
 
+test('an SCC with a filler RSRP shows no readings at all, but still counts as a carrier', () => {
+  const cellwan = {
+    INTF_RSRP: -87,
+    INTF_Current_Band: 'B3',
+    INTF_Downlink_Bandwidth: '20M',
+    SCC_Info: [
+      // As the FWA505 sent it: the modem didn't measure this carrier.
+      {
+        Enable: true,
+        PhysicalCellID: 393,
+        RFCN: 1815,
+        Band: 'B3',
+        RSSI: -120,
+        RSRP: -140,
+        RSRQ: -20,
+        SINR: 10,
+        DownlinkBandwidth: '20M',
+        CC_Type: 'SCC',
+      },
+    ],
+  };
+  const s = summarizeCarriers({ cell, nr: null, cellwan });
+  const scc = s.carriers.find((c) => c.pci === 393);
+  assert.deepEqual([scc.rsrp, scc.rsrq, scc.sinr, scc.rssi, scc.measured], [null, null, null, null, false]);
+  assert.equal(scc.bandwidth, 20);
+  assert.equal(s.totalBandwidth, 40);
+  assert.equal(s.carriers[0].measured, true);
+});
+
 test('inactive NR leg is dropped', () => {
   assert.equal(summarizeCarriers({ cell, nr: { ...nr, RSRP: 0 } }).combo, 'B7');
 });
