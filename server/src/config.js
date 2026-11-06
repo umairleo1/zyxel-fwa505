@@ -36,6 +36,9 @@ export const config = {
   // The Radio page changes the router's preferred network mode and bands (cellwan_band),
   // always as a trial that reverts unless kept. RADIO_CONTROL_ENABLED=false turns it off.
   radioControlEnabled: !/^(0|false|no|off)$/i.test(env.RADIO_CONTROL_ENABLED ?? ''),
+  // The System page can restart the router, as its own Maintenance → Reboot does.
+  // REBOOT_ENABLED=false removes the button and the router path.
+  rebootEnabled: !/^(0|false|no|off)$/i.test(env.REBOOT_ENABLED ?? ''),
   // Extra names the dashboard may be reached by (reverse proxy, DNS name), on top of
   // localhost, this machine's addresses and hostname.
   allowedHosts: csv(env.ALLOWED_HOSTS),

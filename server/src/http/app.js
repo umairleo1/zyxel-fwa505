@@ -8,6 +8,7 @@ import { insightsRoutes } from './routes/insights.js';
 import { liveRoutes } from './routes/live.js';
 import { smsRoutes } from './routes/sms.js';
 import { radioRoutes } from './routes/radio.js';
+import { rebootRoutes } from './routes/reboot.js';
 import { basicAuth, csrfGuard, hostGuard, isLoopback, liveAllowedHostnames, securityHeaders } from './security.js';
 
 /**
@@ -41,6 +42,7 @@ export function createApp(deps) {
   api.use(liveRoutes(deps));
   api.use(smsRoutes(deps));
   api.use(radioRoutes(deps));
+  api.use(rebootRoutes(deps));
   api.use((_req, res) => res.status(404).json({ error: 'Not found' }));
   app.use('/api', api);
 

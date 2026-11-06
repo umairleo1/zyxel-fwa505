@@ -20,7 +20,7 @@ export function lanIp(routerUrl) {
 }
 
 /** Snapshot of everything the UI's health indicators need. */
-export function createStatus({ config, collector, syslog, snmp, client, sms, radio }) {
+export function createStatus({ config, collector, syslog, snmp, client, sms, radio, reboot }) {
   return () => ({
     routerUrl: config.routerUrl,
     lanIp: lanIp(config.routerUrl),
@@ -32,6 +32,9 @@ export function createStatus({ config, collector, syslog, snmp, client, sms, rad
     radioEnabled: config.radioControlEnabled,
     // A band selection on trial: { until } (it reverts then unless kept), or null.
     radioTrial: config.radioControlEnabled ? (radio?.trial ?? null) : null,
+    rebootEnabled: config.rebootEnabled,
+    // When Insight last asked the router to restart (ms), or null.
+    restartRequestedAt: config.rebootEnabled ? (reboot?.lastAt ?? null) : null,
     collector: publicCollectorState(collector.state),
     syslog: syslog.state,
     snmp: snmp.state,

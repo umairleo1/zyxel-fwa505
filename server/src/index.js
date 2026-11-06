@@ -17,6 +17,7 @@ import { isLoopback, liveAllowedHostnames } from './http/security.js';
 import { createSourceFilter, defaultSources } from './ingest/guard.js';
 import { createSmsService } from './sms/service.js';
 import { createRadioService } from './radio/service.js';
+import { createRebootService } from './router/reboot.js';
 import { findKey } from './lib/util.js';
 
 if (!config.routerPassword) {
@@ -44,6 +45,7 @@ const client = new RouterClient({
   certPin: { get: () => db.getMeta('routerCertSha256'), set: (fp) => db.setMeta('routerCertSha256', fp) },
   allowSms: config.smsEnabled,
   allowBandSelection: config.radioControlEnabled,
+  allowReboot: config.rebootEnabled,
 });
 // collector is created below; isReady only runs once the service is started.
 const sms = createSmsService({
@@ -64,6 +66,7 @@ const sms = createSmsService({
 const radio = createRadioService({ client, db, enabled: config.radioControlEnabled, onChange: () => pushStatus() });
 const collector = new Collector({ client, db, pollIntervalSec: config.pollIntervalSec, statusIntervalSec: config.statusIntervalSec });
 const routerData = createRouterData({ client, collector });
+const reboot = createRebootService({ client, db, collector, enabled: config.rebootEnabled, onChange: () => pushStatus() });
 // Only the router (plus loopback) may feed the log, unless INGEST_ALLOWED_SOURCES says otherwise.
 const sources = createSourceFilter(config.ingestAllowedSources.length ? config.ingestAllowedSources : defaultSources(config.routerUrl));
 const syslog = startSyslog({ host: config.syslogHost, port: config.syslogPort, db, allows: sources.allows });
@@ -77,7 +80,7 @@ const snmp = startSnmpTraps({
   onTrap: () => collector.pollNow(),
 });
 const samplers = startSamplers({ routerData, db, emit: (what) => hub.broadcast(what, { at: Date.now() }) });
-const statusPayload = createStatus({ config, collector, syslog, snmp, client, sms, radio });
+const statusPayload = createStatus({ config, collector, syslog, snmp, client, sms, radio, reboot });
 
 // Status changes on every poll and every syslog/trap packet: push at most once per second.
 const pushStatus = hub.throttled('status', statusPayload, 1000);
@@ -162,6 +165,7 @@ const app = createApp({
   routerData,
   sms: config.smsEnabled ? sms : null,
   radio: config.radioControlEnabled ? radio : null,
+  reboot: config.rebootEnabled ? reboot : null,
   statusPayload,
   statusIntervalSec: config.statusIntervalSec,
   security: {
