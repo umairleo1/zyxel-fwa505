@@ -13,7 +13,10 @@ const [WAN_DOWN_SEC, WAN_CYCLE_SEC] = (process.env.MOCK_WAN_DROP ?? '').split('/
 const wanDown = () => WAN_CYCLE_SEC > 0 && (Date.now() / 1000) % WAN_CYCLE_SEC < WAN_DOWN_SEC;
 const PASSWORD = 'mock';
 const sessions = new Set();
-const bootAt = Date.now() - 3 * 86400 * 1000;
+let bootAt = Date.now() - 3 * 86400 * 1000;
+// After POST /cgi-bin/Reboot the router stops answering until this time, then boots afresh.
+let downUntil = 0;
+const REBOOT_SEC = 45;
 const system = [];
 const security = [];
 
@@ -169,6 +172,8 @@ http
     const cookie = /Authentication=([^;]+)/.exec(req.headers.cookie || '')?.[1];
     const authed = cookie && sessions.has(cookie);
     console.log(`${req.method} ${url.pathname}${url.search} ${authed ? '(authed)' : ''}`);
+    // Restarting: no web server, so connections just fail, as with the real router.
+    if (Date.now() < downUntil) return req.socket.destroy();
 
     if (url.pathname === '/getRSAPublickKey') return send(res, 200, { RSAPublicKey: 'None' });
     if (url.pathname === '/UserLogin' && req.method === 'POST') {
@@ -193,6 +198,17 @@ http
     if (url.pathname === '/cgi-bin/UserLogout') {
       sessions.delete(cookie);
       return send(res, 200, { result: 'ZCFG_SUCCESS' });
+    }
+    if (url.pathname === '/cgi-bin/Reboot' && req.method === 'POST') {
+      if (!url.searchParams.get('sessionkey')) return send(res, 401, { result: 'Invalid session key' });
+      send(res, 200, { result: 'ZCFG_SUCCESS' });
+      sessions.clear();
+      downUntil = Date.now() + REBOOT_SEC * 1000;
+      bootAt = downUntil;
+      // A log line once it's back up (wording made up: the real one isn't captured yet).
+      setTimeout(() => system.push(`[System] ${stamp()} syslog.notice System reboot by user`), REBOOT_SEC * 1000);
+      console.log(`[mock] rebooting: back in ${REBOOT_SEC} s`);
+      return;
     }
     if (url.pathname === '/cgi-bin/Log' && url.searchParams.get('action') === 'GET_LOG') {
       const lines = url.searchParams.get('iid')?.startsWith('[2') ? security : system;
