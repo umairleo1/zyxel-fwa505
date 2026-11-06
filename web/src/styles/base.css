@@ -206,3 +206,13 @@ kbd {
 .btn-primary:hover:not(:disabled) {
   background: color-mix(in srgb, var(--accent) 88%, var(--text));
 }
+/* The second click of a two-step action that disrupts something (restart). */
+.btn-danger {
+  border-color: var(--critical);
+  background: var(--critical);
+  color: #fff;
+  font-weight: 600;
+}
+.btn-danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--critical) 88%, #000);
+}

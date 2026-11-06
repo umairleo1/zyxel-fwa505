@@ -27,6 +27,7 @@ export const api = {
   // Live status & control
   status: () => request('/api/status'),
   collector: (action) => request(`/api/collector/${action}`, { method: 'POST' }),
+  restartRouter: () => request('/api/router/reboot', { method: 'POST' }),
 
   // Event log
   logs: (query, cursor, limit = 200) => request(`/api/logs${qs({ ...query, cursor, limit })}`),

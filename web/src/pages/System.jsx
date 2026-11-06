@@ -9,6 +9,7 @@ import { SERIES as SERIES_BY_ID, rangeOptions } from '../lib/domain.js';
 import Segmented from '../components/ui/Segmented.jsx';
 import TimeSeries from '../components/charts/TimeSeries.jsx';
 import Legend from '../components/charts/Legend.jsx';
+import RestartRouter from '../features/system/RestartRouter.jsx';
 
 const SERIES = [SERIES_BY_ID.cpu, SERIES_BY_ID.memory];
 
@@ -37,6 +38,7 @@ export default function System() {
       {!sys.data && sys.loading && <PageLoader />}
       <PageHeader title="System" subtitle="Router health, load, reboots and interfaces.">
         <Segmented options={rangeOptions()} value={span} onChange={setSpan} label="Range" />
+        <RestartRouter />
       </PageHeader>
       <div className="tiles">
         <Stat label="Uptime" value={<Uptime router={router} />} sub={router?.bootedAt ? `Booted ${formatFull(router.bootedAt)}` : ''} />

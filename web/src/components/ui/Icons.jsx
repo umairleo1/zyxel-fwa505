@@ -27,6 +27,12 @@ export const Play = (p) => (
     <path d="M7 4v16l13-8z" />
   </Svg>
 );
+export const Power = (p) => (
+  <Svg {...p}>
+    <path d="M12 3v9" />
+    <path d="M18.36 6.64a9 9 0 1 1-12.73 0" />
+  </Svg>
+);
 export const Refresh = (p) => (
   <Svg {...p}>
     <path d="M21 12a9 9 0 1 1-2.64-6.36" />
