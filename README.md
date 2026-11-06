@@ -2,7 +2,7 @@
 
 A local monitoring and diagnostics dashboard for the **Zyxel FWA505** 5G router. It collects what the router's own admin page only shows in the moment: signal and carrier history, connected devices, traffic, reboots and logs. It then turns that history into insights, such as configuration risks, reliability and actionable signal advice.
 
-Insight runs on your own computer, talks only to your router, and is **read-only**, with two deliberate exceptions: the Messages tab can send, mark read and delete SMS on the router's SIM, and Radio control can change the preferred network mode and bands, always as a trial that reverts unless kept (`SMS_ENABLED=false` and `RADIO_CONTROL_ENABLED=false` turn them off).
+Insight runs on your own computer, talks only to your router, and is **read-only**, with three deliberate exceptions: the Messages tab can send, mark read and delete SMS on the router's SIM, Radio control can change the preferred network mode and bands, always as a trial that reverts unless kept, and the System page can restart the router (`SMS_ENABLED=false`, `RADIO_CONTROL_ENABLED=false` and `REBOOT_ENABLED=false` turn them off).
 
 ![Dashboard](docs/screenshots/dashboard.png)
 
@@ -115,10 +115,11 @@ Notes:
 
 ## Safety and privacy
 
-- **Read-only by construction, with two exceptions:**
-  - **No writes:** the router client refuses every non-GET request except login, logout, SMS and the band selection, and never calls `DEL_LOG`.
+- **Read-only by construction, with three exceptions:**
+  - **No writes:** the router client refuses every non-GET request except login, logout, SMS, the band selection and a restart, and never calls `DEL_LOG`.
   - **The SMS exception:** `POST`/`PUT`/`DELETE` are allowed to exactly one endpoint, `/cgi-bin/DAL?oid=cellwan_sms`, with a fixed set of parameters, and only while `SMS_ENABLED` is on (the default). That's how the Messages tab sends, marks read and deletes texts. It can't be pointed at any other setting. Sends are never retried (a retry could text twice), are limited to 5 a minute and 30 an hour, and each send or delete is logged with the number partly masked and without the text.
   - **The band-selection exception:** `PUT` is allowed to exactly one endpoint, `/cgi-bin/DAL?oid=cellwan_band`, with nothing else on the URL, and only while `RADIO_CONTROL_ENABLED` is on (the default). The body is the router's own object with only the network mode and band list changed, checked first against the same rules as the router's admin page (for example, 5G NSA keeps at least one 4G and one 5G band). Each change is a trial: unless you press **Keep** within 5 minutes, Insight puts back the previous selection, also after a restart, and retries until the router accepts it. Changes are at least 15 s apart so the modem can re-register, and each one is logged.
+  - **The restart exception:** `POST` is allowed to exactly one endpoint, `/cgi-bin/Reboot`, with only the session key on the URL and no body, as the router's own Maintenance → Reboot page sends it, and only while `REBOOT_ENABLED` is on (the default). The button asks twice, is never retried, and works at most once every 5 minutes (also across Insight restarts). The request is logged first, so the reboot that follows is recorded as expected and the outage as a requested restart, not a fault.
   - **What it can't do:** cell (PCI) lock isn't offered: firmware V1.71 hides it and returns nothing for it. Carrier aggregation has no setting at all; the network decides it.
   - **Messages aren't stored:** they're read live from the SIM; Insight keeps no copy, and the router cache skips them. While the dashboard is open, the inbox is checked once a minute for the unread badge.
   - **Allowlist:** router data is read only from an explicit list of endpoints (`server/src/router/catalog.js`).
@@ -143,27 +144,28 @@ See [SECURITY.md](SECURITY.md) for the threat model and how to report a vulnerab
 
 All settings are environment variables, read from `.env` in the project root. See `.env.example`.
 
-| Variable                            | Default                  | Purpose                                                                                                                         |
-| ----------------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
-| `ROUTER_URL`                        | `https://192.168.1.1`    | Router address (self-signed certificate accepted for this host only)                                                            |
-| `ROUTER_USER` / `ROUTER_PASSWORD`   | `admin` / none           | Router admin login                                                                                                              |
-| `POLL_INTERVAL_SEC`                 | `120`                    | How often the router log (last 100 lines) is read                                                                               |
-| `STATUS_INTERVAL_SEC`               | `5`                      | Signal, carriers and uptime                                                                                                     |
-| `SYSLOG_PORT` / `SYSLOG_HOST`       | `5514` / `0.0.0.0`       | Remote syslog listener                                                                                                          |
-| `SNMP_TRAP_PORT` / `SNMP_TRAP_HOST` | `1162` / `0.0.0.0`       | SNMP trap listener                                                                                                              |
-| `SNMP_COMMUNITY`                    | empty (any)              | Only accept traps with this community                                                                                           |
-| `INGEST_ALLOWED_SOURCES`            | the router's address     | Comma-separated IPs/hostnames allowed to send syslog and traps; `*` = anyone (loopback always allowed)                          |
-| `HOST` / `PORT`                     | `127.0.0.1` / `4400`     | Web UI and API                                                                                                                  |
-| `DASHBOARD_PASSWORD`                | empty (no login)         | HTTP Basic password, any username. Required when `HOST` is not loopback                                                         |
-| `ALLOWED_HOSTS`                     | empty                    | Extra host names the UI may be opened by (DNS name, reverse proxy)                                                              |
-| `SMS_ENABLED`                       | `true`                   | Messages tab: read, send and delete SMS on the router's SIM                                                                     |
-| `RADIO_CONTROL_ENABLED`             | `true`                   | Radio control: change the preferred network mode and bands, as trials. With `SMS_ENABLED=false` too, Insight is fully read-only |
-| `DB_PATH`                           | `server/data/insight.db` | SQLite database (relative to the project root)                                                                                  |
-| `RETAIN_LOGS_DAYS`                  | `180`                    | Log retention                                                                                                                   |
-| `RETAIN_SIGNAL_DAYS`                | `90`                     | 5-second signal sample retention                                                                                                |
-| `RETAIN_WIFI_DAYS`                  | `30`                     | Per-device Wi-Fi sample retention                                                                                               |
-| `BACKUP_KEEP`                       | `4`                      | Database backups kept in `<DB dir>/backups/` (`0` = off)                                                                        |
-| `BACKUP_EVERY_DAYS`                 | `7`                      | Days between database backups                                                                                                   |
+| Variable                            | Default                  | Purpose                                                                                                |
+| ----------------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------ |
+| `ROUTER_URL`                        | `https://192.168.1.1`    | Router address (self-signed certificate accepted for this host only)                                   |
+| `ROUTER_USER` / `ROUTER_PASSWORD`   | `admin` / none           | Router admin login                                                                                     |
+| `POLL_INTERVAL_SEC`                 | `120`                    | How often the router log (last 100 lines) is read                                                      |
+| `STATUS_INTERVAL_SEC`               | `5`                      | Signal, carriers and uptime                                                                            |
+| `SYSLOG_PORT` / `SYSLOG_HOST`       | `5514` / `0.0.0.0`       | Remote syslog listener                                                                                 |
+| `SNMP_TRAP_PORT` / `SNMP_TRAP_HOST` | `1162` / `0.0.0.0`       | SNMP trap listener                                                                                     |
+| `SNMP_COMMUNITY`                    | empty (any)              | Only accept traps with this community                                                                  |
+| `INGEST_ALLOWED_SOURCES`            | the router's address     | Comma-separated IPs/hostnames allowed to send syslog and traps; `*` = anyone (loopback always allowed) |
+| `HOST` / `PORT`                     | `127.0.0.1` / `4400`     | Web UI and API                                                                                         |
+| `DASHBOARD_PASSWORD`                | empty (no login)         | HTTP Basic password, any username. Required when `HOST` is not loopback                                |
+| `ALLOWED_HOSTS`                     | empty                    | Extra host names the UI may be opened by (DNS name, reverse proxy)                                     |
+| `SMS_ENABLED`                       | `true`                   | Messages tab: read, send and delete SMS on the router's SIM                                            |
+| `RADIO_CONTROL_ENABLED`             | `true`                   | Radio control: change the preferred network mode and bands, as trials                                  |
+| `REBOOT_ENABLED`                    | `true`                   | System page: Restart router. With the two above also `false`, Insight is fully read-only               |
+| `DB_PATH`                           | `server/data/insight.db` | SQLite database (relative to the project root)                                                         |
+| `RETAIN_LOGS_DAYS`                  | `180`                    | Log retention                                                                                          |
+| `RETAIN_SIGNAL_DAYS`                | `90`                     | 5-second signal sample retention                                                                       |
+| `RETAIN_WIFI_DAYS`                  | `30`                     | Per-device Wi-Fi sample retention                                                                      |
+| `BACKUP_KEEP`                       | `4`                      | Database backups kept in `<DB dir>/backups/` (`0` = off)                                               |
+| `BACKUP_EVERY_DAYS`                 | `7`                      | Days between database backups                                                                          |
 
 ## Accuracy and limitations
 
@@ -201,7 +203,7 @@ To exercise mobile-data outages, set `MOCK_WAN_DROP=<down>/<cycle>` in seconds, 
 shared/                 Domain rules shared by server and UI (signal scales, severities, SMS encoding, band rules)
 server/src/
   index.js              Composition root: wiring, startup, graceful shutdown
-  router/               Router client (read-only plus SMS and band selection), endpoint allowlist, shared cache, secret masking
+  router/               Router client (read-only plus SMS, band selection and restart), endpoint allowlist, shared cache, secret masking
   collector/            Polling and recovery, radio and carrier interpretation, mobile data state, reboots, samplers
   ingest/               Syslog and SNMP trap listeners (shared UDP listener)
   logs/                 Router log and syslog parsing, sliding-window deduplication
