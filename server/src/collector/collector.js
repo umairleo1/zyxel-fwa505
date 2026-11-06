@@ -86,6 +86,18 @@ export class Collector extends EventEmitter {
     await this.client.logout().catch(() => {});
   }
 
+  /** Insight just asked the router to restart: the outage that follows is that, not a fault. */
+  expectRestart(at = Date.now()) {
+    this.restartAt = at;
+  }
+
+  // Why the router stopped answering: the restart Insight asked for, if the outage began
+  // within a few minutes of it, otherwise the kind of error.
+  #outageReason() {
+    const planned = this.restartAt && this.outageStart >= this.restartAt - 60_000 && this.outageStart <= this.restartAt + 5 * 60_000;
+    return planned ? 'restart (requested from Insight)' : (this.state.lastError?.kind ?? null);
+  }
+
   async pause() {
     clearTimeout(this.timer);
     this.state.phase = 'paused';
@@ -172,7 +184,7 @@ export class Collector extends EventEmitter {
         // One failed request that succeeds on the next try is a glitch, not an outage.
         if (this.failures >= 2)
           this.#safely(() =>
-            this.db.insertOutage({ start_ts: this.outageStart, end_ts: end, reason: this.state.lastError?.kind ?? null, kind: 'router' }),
+            this.db.insertOutage({ start_ts: this.outageStart, end_ts: end, reason: this.#outageReason(), kind: 'router' }),
           );
         this.#event('notice', `Router connection restored after ${Math.round((end - this.outageStart) / 1000)}s`);
       } else if (this.state.phase !== 'ok' && this.state.phase !== 'starting') {
@@ -229,7 +241,8 @@ export class Collector extends EventEmitter {
       const now = Date.now();
       const watching = this.state.lastSuccessAt && now - this.state.lastSuccessAt <= 2 * Math.min(this.pollMs, this.statusMs) + 15_000;
       this.outageStart = watching ? this.state.lastSuccessAt : now;
-      this.#event('warning', `Router unavailable (${kind}): ${err.message}`);
+      if (this.#outageReason()?.startsWith('restart')) this.#event('notice', 'Router restarting; waiting for it to come back');
+      else this.#event('warning', `Router unavailable (${kind}): ${err.message}`);
     }
     this.state.phase = 'backoff';
     this.#schedule(delay);

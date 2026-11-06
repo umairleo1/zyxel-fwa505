@@ -49,6 +49,20 @@ test('a single failed request is a glitch, not an outage', async () => {
   await c.stop();
 });
 
+test('the outage after a restart Insight asked for is labelled as that restart', async () => {
+  const { c, outages } = harness(['ok', 'ok', 'fail', 'fail', 'ok', 'ok']); // ok, restart, fail, fail, back
+  c.lastLogPoll = 0;
+  await c.tickForTest();
+  c.expectRestart(Date.now());
+  for (let k = 0; k < 3; k++) {
+    c.lastLogPoll = 0;
+    await c.tickForTest();
+  }
+  assert.equal(outages.length, 1);
+  assert.equal(outages[0].reason, 'restart (requested from Insight)');
+  await c.stop();
+});
+
 test('after a long sleep, an outage starts at the first failure, not the last success before sleep', async () => {
   const { c, outages } = harness(['ok', 'ok', 'fail', 'fail', 'ok', 'ok']); // ok, sleep, fail, fail, ok
   c.lastLogPoll = 0;
