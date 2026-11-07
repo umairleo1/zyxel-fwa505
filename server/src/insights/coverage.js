@@ -23,7 +23,10 @@ export function unmonitoredSpans({ from, to, gaps, routerOutages, statusMs = 0 }
   );
 }
 
-/** Stored outages in [from, to] plus those the collector still has open (not stored until they end). */
+/** Outages still in progress across the services that track them (collector: router, wan; internet check). */
+export const openOutages = ({ collector, internet }) => [...(collector?.openOutages?.() ?? []), ...(internet?.openOutages() ?? [])];
+
+/** Stored outages in [from, to] plus those still open (not stored until they end). */
 export function outagesIn(db, { from, to, openOutages = [] }) {
   return [...openOutages.filter((o) => o.end_ts >= from && o.start_ts <= to), ...db.outages(from, to)];
 }

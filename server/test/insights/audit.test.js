@@ -32,6 +32,15 @@ const fixtures = {
   logset: [{ LogMode: 'Local', LogServer: '0.0.0.0', UDPPort: 514 }],
 };
 
+test('firmware audit distinguishes scheduled checks from automatic installation', async () => {
+  for (const force of [false, true]) {
+    const a = await runAudit(async (id) => (id === 'periodic_FOTA_config' ? [{ PeriodicCheckEnable: true, ForceUpgrade: force }] : []));
+    const fota = a.checks.find((c) => c.id === 'fota');
+    assert.equal(fota.status, force ? 'pass' : 'warn');
+    assert.equal(fota.title, force ? 'Automatic firmware updates are on' : 'Scheduled firmware checks are on');
+  }
+});
+
 test('audit flags the real-world findings', async () => {
   const a = await runAudit(async (id) => {
     if (!(id in fixtures)) throw new Error('n/a');

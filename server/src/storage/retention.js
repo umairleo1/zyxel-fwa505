@@ -4,6 +4,7 @@ const TABLES = [
   ['station_samples', 'stationDays'],
   ['system_samples', 'systemDays'],
   ['traffic', 'trafficDays'],
+  ['internet_samples', 'internetDays'],
 ];
 
 /** Delete rows older than each table's retention window. Returns rows removed per table. */

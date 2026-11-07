@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { summarizeTraffic } from '../../collector/samplers.js';
 import { timelineFor } from '../../insights/timeline.js';
-import { coverageFor, outagesIn } from '../../insights/coverage.js';
+import { coverageFor, openOutages, outagesIn } from '../../insights/coverage.js';
 import { bucketFor, timeRange } from '../params.js';
 
 const RECENT_STATIONS_MS = 5 * 60e3;
@@ -9,9 +9,9 @@ const RECENT_STATIONS_MS = 5 * 60e3;
 const TRAFFIC_PAD_MS = 120e3;
 
 /** Time series collected by Insight: signal, traffic, CPU/memory, the connection timeline, bands seen, devices. */
-export function telemetryRoutes({ db, collector }) {
+export function telemetryRoutes({ db, collector, internet }) {
   const r = Router();
-  const open = () => collector.openOutages?.() ?? [];
+  const open = () => openOutages({ collector, internet });
   // Not-monitored and router-unreachable spans, so every chart can show why a line breaks.
   const coverage = (from, to) => coverageFor(db, { from, to, statusMs: collector.statusMs, openOutages: open() });
 
@@ -46,10 +46,13 @@ export function telemetryRoutes({ db, collector }) {
 
   r.get('/system', (req, res) => {
     const { from, to } = timeRange(req.query);
+    const internetBucketMs = Math.max(60e3, bucketFor(to - from, 240));
     res.json({
       from,
       to,
       samples: db.system(from, to),
+      // Internet check, minute rows bucketed so a 30-day range stays light.
+      internet: { bucketMs: internetBucketMs, points: db.internetSamples({ from, to }, internetBucketMs) },
       reboots: db.reboots(from, to),
       outages: outagesIn(db, { from, to, openOutages: open() }),
       coverage: coverage(from, to),

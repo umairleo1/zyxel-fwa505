@@ -45,6 +45,12 @@ export function migrate(db) {
     -- kind: router (didn't answer Insight) | wan (answered, but mobile data was down)
     CREATE TABLE IF NOT EXISTS outages (start_ts INTEGER PRIMARY KEY, end_ts INTEGER, reason TEXT, kind TEXT NOT NULL DEFAULT 'router');
     CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
+    -- Internet check, one row per minute (see collector/internet.js). failed: no target
+    -- answered while the router did; local: the router didn't answer either (no verdict).
+    CREATE TABLE IF NOT EXISTS internet_samples (
+      ts INTEGER PRIMARY KEY, rounds INTEGER NOT NULL, failed INTEGER NOT NULL, local INTEGER NOT NULL,
+      rtt_sum REAL NOT NULL, rtt_n INTEGER NOT NULL, rtt_max REAL
+    );
 
     -- Every band and cell the router has used (see storage/bands.js). Sums, not samples.
     CREATE TABLE IF NOT EXISTS bands (

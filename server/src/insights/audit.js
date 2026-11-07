@@ -377,9 +377,15 @@ export async function runAudit(get) {
       check(
         'fota',
         'Maintenance',
-        fota[0].PeriodicCheckEnable ? 'pass' : 'warn',
-        fota[0].PeriodicCheckEnable ? 'Automatic firmware updates are on' : 'Automatic firmware updates are off',
-        fota[0].PeriodicCheckEnable ? 'Security fixes install without intervention.' : 'Security fixes need to be installed manually.',
+        fota[0].PeriodicCheckEnable && fota[0].ForceUpgrade ? 'pass' : 'warn',
+        fota[0].PeriodicCheckEnable
+          ? fota[0].ForceUpgrade
+            ? 'Automatic firmware updates are on'
+            : 'Scheduled firmware checks are on'
+          : 'Automatic firmware checks are off',
+        fota[0].PeriodicCheckEnable && fota[0].ForceUpgrade
+          ? 'The router reports scheduled checks with automatic installation enabled.'
+          : 'Automatic installation is not confirmed. Review the firmware settings in High control.',
       ),
     );
   const dev = status?.[0]?.DeviceInfo;

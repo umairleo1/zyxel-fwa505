@@ -143,3 +143,25 @@ test('signal stored before filtering loses its "no measurement" values once', ()
   assert.equal(again.metricStats('lte_rsrp', 0, 10_000, [-94, -99, -105]).stats.min, -100);
   again.close();
 });
+
+test('internet check minutes: bucketed with mean and peak connect time and the failed share of judged rounds', () => {
+  const db = openDb(path.join(tmpDir(), 'i.db'));
+  db.insertInternetSample({ ts: 0, rounds: 60, failed: 0, local: 0, rtt_sum: 60 * 40, rtt_n: 60, rtt_max: 90 });
+  db.insertInternetSample({ ts: 60e3, rounds: 60, failed: 30, local: 10, rtt_sum: 20 * 100, rtt_n: 20, rtt_max: 900 });
+  db.insertInternetSample({ ts: 120e3, rounds: 60, failed: 0, local: 60, rtt_sum: 0, rtt_n: 0, rtt_max: null });
+  assert.deepEqual(
+    db.internetSamples({ from: 0, to: 180e3 }, 60e3).map((r) => ({ ...r })),
+    [
+      { t: 0, rtt_avg: 40, rtt_max: 90, rounds: 60, failed: 0, failed_pct: 0 },
+      { t: 60e3, rtt_avg: 100, rtt_max: 900, rounds: 60, failed: 30, failed_pct: 60 },
+      { t: 120e3, rtt_avg: null, rtt_max: null, rounds: 60, failed: 0, failed_pct: null },
+    ],
+  );
+  const [both] = db.internetSamples({ from: 0, to: 100e3 }, 120e3).map((r) => ({ ...r }));
+  assert.deepEqual(
+    both,
+    { t: 0, rtt_avg: 55, rtt_max: 900, rounds: 120, failed: 30, failed_pct: 27.3 },
+    '(2400 + 2000) / 80 ms; 30 of 110',
+  );
+  db.close();
+});

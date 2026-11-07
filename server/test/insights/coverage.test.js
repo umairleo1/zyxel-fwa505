@@ -40,6 +40,7 @@ test('/api/metrics, /api/traffic and /api/system carry coverage', async (t) => {
     metrics: () => [],
     traffic: () => [],
     system: () => [],
+    internetSamples: () => [],
     reboots: () => [],
   };
   const s = await serve(fakeDeps({ db, collector: { state: { phase: 'ok' }, statusMs: 5_000, openOutages: () => [] } }));

@@ -1,8 +1,8 @@
-import { transaction } from './sql.js';
+import { bucketExpr, transaction } from './sql.js';
 
 const round1 = (x) => Math.round(x * 10) / 10;
 
-/** Periodic samples: WAN/LAN byte counters, CPU/memory and per-client Wi-Fi signal. */
+/** Periodic samples: WAN/LAN byte counters, CPU/memory, per-client Wi-Fi signal and the internet check. */
 export function samplesRepo(db, sql) {
   return {
     insertTraffic: (t) =>
@@ -34,6 +34,26 @@ export function samplesRepo(db, sql) {
       };
       return { cpu: one('cpu'), mem: one('CASE WHEN mem_total > 0 THEN 100.0 * (mem_total - mem_free) / mem_total END') };
     },
+
+    insertInternetSample: (s) =>
+      sql('INSERT OR REPLACE INTO internet_samples (ts, rounds, failed, local, rtt_sum, rtt_n, rtt_max) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+        s.ts,
+        s.rounds,
+        s.failed,
+        s.local,
+        s.rtt_sum,
+        s.rtt_n,
+        s.rtt_max,
+      ),
+    /** Internet check per bucket: mean and peak connect time, and the share of judged rounds that failed. */
+    internetSamples: ({ from, to }, bucketMs) =>
+      sql(`SELECT ${bucketExpr} AS t,
+          ROUND(SUM(rtt_sum) / NULLIF(SUM(rtt_n), 0)) AS rtt_avg,
+          MAX(rtt_max) AS rtt_max,
+          SUM(rounds) AS rounds,
+          SUM(failed) AS failed,
+          ROUND(100.0 * SUM(failed) / NULLIF(SUM(rounds) - SUM(local), 0), 1) AS failed_pct
+        FROM internet_samples WHERE ts >= ? AND ts <= ? GROUP BY t ORDER BY t`).all(bucketMs, bucketMs, from, to),
 
     insertStations(ts, rows) {
       const stmt = sql('INSERT INTO station_samples (ts, mac, band, rssi, snr, rate) VALUES (?, ?, ?, ?, ?, ?)');

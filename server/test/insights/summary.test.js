@@ -79,6 +79,25 @@ test('mobile data drops become a recommendation with their causes', () => {
   assert.match(rec.detail, /No WAN IP address ×2, No cellular signal/);
 });
 
+test('internet stalls are counted apart from router outages and become a recommendation', () => {
+  const db = fresh();
+  db.insertOutage({ start_ts: H, end_ts: H + 150e3, reason: 'No reply from 1.1.1.1 or 8.8.8.8 (router reachable)', kind: 'internet' });
+  db.insertOutage({
+    start_ts: 2 * H,
+    end_ts: 2 * H + 30e3,
+    reason: 'No reply from 1.1.1.1 or 8.8.8.8 (router reachable)',
+    kind: 'internet',
+  });
+  db.insertOutage({ start_ts: 3 * H, end_ts: 3 * H + 60e3, reason: 'network', kind: 'router' });
+  const r = run(db);
+  db.close();
+  assert.equal(r.reliability.internetStalls, 2);
+  assert.equal(r.reliability.internetStallSec, 180);
+  assert.equal(r.reliability.longestStallSec, 150);
+  assert.equal(r.reliability.routerOutages, 1);
+  assert.ok(titles(r).includes('2 internet stalls (3 min, longest 3 min)'), titles(r).join(' | '));
+});
+
 test('projectMonth: none before two days of data, then the rate so far', () => {
   const month = { monthStart: 0, monthEnd: 30 * D };
   assert.equal(projectMonth({ used: 1e9, firstSampleTs: 0, now: D, ...month }).projected, null);

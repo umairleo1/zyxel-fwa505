@@ -35,6 +35,8 @@ export function computeInsights({ db, from, to, state, traffic, hourlyTraffic, m
   );
   const covered = cov.covered;
   const wan = outages.filter((o) => o.kind === 'wan');
+  const stalls = outages.filter((o) => o.kind === 'internet');
+  const secIn = (list) => Math.round(list.reduce((s, o) => s + Math.min(o.end_ts, to) - Math.max(o.start_ts, from), 0) / 1000);
   const reliability = {
     monitoredSince: firstSample,
     startedInPeriod: firstSample != null && firstSample > from,
@@ -43,9 +45,12 @@ export function computeInsights({ db, from, to, state, traffic, hourlyTraffic, m
     reboots: reboots.length,
     unexpectedReboots: reboots.filter((r) => r.kind !== 'expected').length,
     outages: outages.length,
-    routerOutages: outages.length - wan.length,
+    routerOutages: outages.length - wan.length - stalls.length,
     wanOutages: wan.length,
-    wanDownSec: Math.round(wan.reduce((s, o) => s + Math.min(o.end_ts, to) - Math.max(o.start_ts, from), 0) / 1000),
+    wanDownSec: secIn(wan),
+    internetStalls: stalls.length,
+    internetStallSec: secIn(stalls),
+    longestStallSec: stalls.length ? Math.round(Math.max(...stalls.map((o) => o.end_ts - o.start_ts)) / 1000) : 0,
     wanReasons: countBy(wan.map((o) => (o.reason ?? 'unknown').replace(/ \(.*\)$/, ''))),
     downtimeSec: Math.round(downMs / 1000),
     longestOutageSec: outages.length ? Math.round(Math.max(...outages.map((o) => o.end_ts - o.start_ts)) / 1000) : 0,
@@ -172,6 +177,17 @@ function recommend({ state, signal, reliability, system, devicesSummary, bands, 
       detail: `The router stayed up but lost its connection: ${why}.`,
       action:
         'Check the dashboard timeline: drops with weak signal around them point to placement or an antenna; drops with good signal are on the network side, so report the times to your provider.',
+    });
+  }
+  // Internet stalls: the router said mobile data was up, but nothing got through.
+  if (reliability.internetStalls >= 2 || reliability.internetStallSec >= 300) {
+    const n = reliability.internetStalls;
+    recs.push({
+      severity: 'warn',
+      title: `${n} internet stall${n === 1 ? '' : 's'} (${formatSec(reliability.internetStallSec)}, longest ${formatSec(reliability.longestStallSec)})`,
+      detail: 'The router reported mobile data as connected while no traffic got through, so it never logged a drop.',
+      action:
+        'Each stall records the signal when it began. Stalls with low SINR (below ~3 dB) point to placement or an antenna, or to locking the stronger band; stalls with good signal are congestion or the network, so report the times to your provider.',
     });
   }
   if (reliability.routerOutages >= 2) {

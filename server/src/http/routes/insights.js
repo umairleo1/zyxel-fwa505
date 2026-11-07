@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { runAudit } from '../../insights/audit.js';
 import { computeInsights } from '../../insights/summary.js';
+import { openOutages } from '../../insights/coverage.js';
 import { summarizeTraffic, TRAFFIC_PAD_MS, RECENT_STATIONS_MS } from './telemetry.js';
 import { bucketFor, timeRange } from '../params.js';
 import { createFreshGate, INSIGHTS_FRESH_MS } from '../limits.js';
@@ -9,7 +10,7 @@ const AUDIT_TTL_MS = 5 * 60e3; // configuration rarely changes
 const RESULT_TTL_MS = 30e3; // aggregates over days don't move within 30 s
 const MAX_RESULTS = 20; // one entry per distinct span; bounded so odd ?from/?to can't grow it
 
-export function insightsRoutes({ db, routerData, collector }) {
+export function insightsRoutes({ db, routerData, collector, internet }) {
   const r = Router();
   let audit = null;
   const results = new Map(); // span (minutes) -> { at, body }
@@ -59,7 +60,7 @@ export function insightsRoutes({ db, routerData, collector }) {
       month,
       devices: db.devices(),
       stations,
-      openOutages: collector.openOutages?.() ?? [],
+      openOutages: openOutages({ collector, internet }),
     });
     const body = { ...insights, audit: await currentAudit(fresh) };
     results.delete(key);
