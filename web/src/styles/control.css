@@ -1,0 +1,323 @@
+.control-content,
+.control-fields {
+  display: grid;
+  gap: 16px;
+}
+.high-control fieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+.control-session {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 16px;
+  padding: 18px 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.control-session > svg {
+  color: var(--accent);
+}
+.control-session > div:last-child {
+  text-align: right;
+}
+.control-role,
+.control-state {
+  display: inline-block;
+  padding: 3px 9px;
+  border-radius: 5px;
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 600;
+}
+.control-role.is-high {
+  color: var(--accent);
+  background: var(--accent-wash);
+}
+.control-state {
+  margin-left: 6px;
+  text-transform: capitalize;
+}
+.control-tabs {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border);
+  padding: 0 0 1px;
+}
+.control-tabs button {
+  padding: 11px 14px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 5px 5px 0 0;
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.control-tabs button:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+.control-tabs button.is-active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  background: var(--accent-wash);
+}
+.control-capability {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--text-2);
+  margin-bottom: 16px;
+}
+.control-dot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.control-capability.is-available .control-dot {
+  background: var(--good);
+}
+.control-description,
+.control-note {
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.6;
+  margin: 0 0 16px;
+  max-width: 84ch;
+}
+.control-note {
+  border-left: 2px solid var(--border-strong);
+  padding-left: 12px;
+}
+.control-help {
+  display: block;
+  font-size: 12px;
+  line-height: 1.5;
+  font-weight: 400;
+  color: var(--text-2);
+  margin-top: 4px;
+}
+.control-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+.control-field {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-width: 0;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+}
+.control-input {
+  width: 100%;
+  min-width: 0;
+  min-height: 36px;
+  padding: 7px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-weight: 400;
+}
+.control-input:focus {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+.control-input:disabled {
+  background: var(--surface-2);
+  color: var(--muted);
+  cursor: not-allowed;
+}
+.control-file {
+  max-width: 520px;
+}
+.control-toggle {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.control-toggle input {
+  margin: 3px 0 0;
+  accent-color: var(--accent);
+}
+.control-checks,
+.control-page-options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px 20px;
+}
+.control-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+.control-divider {
+  border-top: 1px solid var(--border);
+  margin: 20px 0;
+}
+.control-subsection {
+  display: grid;
+  gap: 14px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+.control-subsection h3,
+.control-fields h3 {
+  margin: 0;
+  font-size: 13px;
+}
+.control-details {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  margin-top: 12px;
+}
+.control-details > summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  justify-content: space-between;
+  padding: 13px 15px;
+  list-style: none;
+  cursor: pointer;
+  font-size: 13px;
+}
+.control-details > summary::-webkit-details-marker {
+  display: none;
+}
+.control-details > summary::after {
+  content: '+';
+  font-size: 18px;
+  color: var(--muted);
+}
+.control-details[open] > summary::after {
+  content: '−';
+}
+.control-details > summary > span:first-child {
+  flex: 1;
+}
+.control-details summary small {
+  display: block;
+  margin-top: 3px;
+  color: var(--text-2);
+}
+.control-editor {
+  padding: 16px;
+  border-top: 1px solid var(--border);
+}
+.control-output {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 440px;
+  overflow: auto;
+  padding: 14px;
+  margin: 0;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text);
+  font: 12px/1.7 var(--mono);
+}
+.control-error {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--critical-text);
+}
+.control-pulse {
+  height: 9px;
+  width: 9px;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: control-pulse 1.5s ease-in-out infinite;
+}
+.control-confirm {
+  width: min(560px, calc(100vw - 32px));
+  max-height: calc(100dvh - 48px);
+  overflow-y: auto;
+  padding: 26px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow-pop);
+}
+.control-confirm::backdrop {
+  background: rgb(0 0 0 / 50%);
+}
+.control-confirm h2 {
+  margin: 0 0 12px;
+  font-size: 19px;
+}
+.control-confirm p {
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.control-confirm .control-actions {
+  justify-content: flex-end;
+  margin-top: 22px;
+}
+.control-review-list {
+  max-height: 220px;
+  overflow: auto;
+  font: 12px/1.8 var(--mono);
+  padding-left: 20px;
+  overflow-wrap: anywhere;
+}
+@keyframes control-pulse {
+  50% {
+    opacity: 0.3;
+  }
+}
+@media (max-width: 1100px) {
+  .control-grid,
+  .control-checks,
+  .control-page-options {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 600px) {
+  .control-grid,
+  .control-checks,
+  .control-page-options {
+    grid-template-columns: 1fr;
+  }
+  .control-session {
+    grid-template-columns: auto 1fr;
+    padding: 15px;
+    gap: 12px;
+  }
+  .control-session > div:last-child {
+    grid-column: 2;
+    text-align: left;
+  }
+  .control-confirm {
+    padding: 20px;
+  }
+  .control-tabs button {
+    padding: 10px 12px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .control-pulse {
+    animation: none;
+  }
+}

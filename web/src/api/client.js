@@ -23,6 +23,33 @@ function qs(obj = {}) {
   return s ? `?${s}` : '';
 }
 
+const controlRequest = (path, method = 'POST', body) =>
+  request(`/api/control${path}`, {
+    method,
+    ...(body === undefined ? {} : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
+  });
+
+async function controlDownload(kind) {
+  const res = await fetch(`/api/control/backup/${encodeURIComponent(kind)}`, { method: 'POST', headers: { 'X-Insight-Request': '1' } });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `Backup failed: ${res.status} ${res.statusText}`);
+  }
+  const blob = await res.blob();
+  if (!blob.size) throw new Error('The router returned an empty backup.');
+  const disposition = res.headers.get('Content-Disposition') ?? '';
+  const filename = (/filename="?([^";]+)"?/.exec(disposition)?.[1] ?? `zyxel-${kind}-backup.conf`).replace(/[/\\\r\n]/g, '_');
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30_000);
+  return { filename };
+}
+
 export const api = {
   // Live status & control
   status: () => request('/api/status'),
@@ -64,4 +91,32 @@ export const api = {
 
   // Read-only router endpoints (allowlisted on the server)
   router: (ids, { fresh } = {}) => request(`/api/router${qs({ ids, fresh })}`),
+
+  // Explicit router management operations; every mutation carries the CSRF header.
+  control: () => controlRequest('', 'GET'),
+  controlRefresh: () => controlRequest('/refresh'),
+  controlAcknowledge: (id) => controlRequest('/operation/acknowledge', 'POST', { id, confirm: 'ACKNOWLEDGE' }),
+  controlFirmwareCheck: () => controlRequest('/firmware/check'),
+  controlFirmwareSettings: (patch) => controlRequest('/firmware/settings', 'PUT', { patch }),
+  controlFirmwareInstall: () => controlRequest('/firmware/install', 'POST', { confirm: 'UPGRADE' }),
+  controlBackup: controlDownload,
+  controlRestore: (file) =>
+    request('/api/control/restore', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream', 'X-Filename': encodeURIComponent(file.name), 'X-Confirm': 'RESTORE' },
+      body: file,
+    }),
+  controlRomd: (action) => controlRequest(`/romd/${action}`, 'POST', { confirm: action === 'save' ? 'SAVE ROMD' : 'CLEAR ROMD' }),
+  controlPartialReset: (keep) => controlRequest('/reset/partial', 'POST', { confirm: 'RESET', keep }),
+  controlDiagnostic: (options) => controlRequest('/diagnostics', 'POST', options),
+  controlWan: (index, patch) =>
+    controlRequest(index == null ? '/wan' : `/wan/${encodeURIComponent(index)}`, index == null ? 'POST' : 'PUT', {
+      patch,
+      confirm: 'SAVE WAN',
+    }),
+  controlAccountCreate: (account) => controlRequest('/accounts', 'POST', { account }),
+  controlAccountSave: (index, patch) => controlRequest(`/accounts/${encodeURIComponent(index)}`, 'PUT', { patch }),
+  controlAccountDelete: (index) => controlRequest(`/accounts/${encodeURIComponent(index)}`, 'DELETE', { confirm: 'DELETE ACCOUNT' }),
+  controlPrivileges: (index, patch) => controlRequest(`/privileges/${encodeURIComponent(index)}`, 'PUT', { patch }),
+  controlZconsole: (patch) => controlRequest('/zconsole', 'PUT', { patch }),
 };

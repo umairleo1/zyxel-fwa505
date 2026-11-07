@@ -22,10 +22,12 @@ const loadInsights = () => import('./pages/Insights.jsx');
 const loadSettings = () => import('./pages/settings/Settings.jsx');
 const loadMessages = () => import('./pages/Messages.jsx');
 const loadRadio = () => import('./pages/Radio.jsx');
+const loadHighControl = () => import('./pages/HighControl.jsx');
 const Insights = lazy(loadInsights);
 const Settings = lazy(loadSettings);
 const Messages = lazy(loadMessages);
 const Radio = lazy(loadRadio);
+const HighControl = lazy(loadHighControl);
 
 // With the event stream connected, data refreshes on push; the slow tick only slides
 // preset time windows forward. Without it, fall back to polling.
@@ -45,6 +47,7 @@ const PAGES = {
   tables: Tables,
   messages: Messages,
   radio: Radio,
+  'high-control': HighControl,
 };
 
 export default function App() {
@@ -102,7 +105,10 @@ export default function App() {
   // Fetch the on-demand pages' code once the first screen is up, so opening them later
   // shows the page (with its loading spinner) instead of waiting on a download.
   useEffect(() => {
-    const id = setTimeout(() => [loadInsights, loadSettings, loadMessages, loadRadio].forEach((load) => load().catch(() => {})), 2000);
+    const id = setTimeout(
+      () => [loadInsights, loadSettings, loadMessages, loadRadio, loadHighControl].forEach((load) => load().catch(() => {})),
+      2000,
+    );
     return () => clearTimeout(id);
   }, []);
   useInterval(
@@ -163,7 +169,7 @@ export default function App() {
             open={menuOpen}
             onClose={() => setMenuOpen(false)}
             device={status?.collector.router?.device}
-            features={{ smsEnabled: !!status?.smsEnabled, radioEnabled: !!status?.radioEnabled }}
+            features={{ smsEnabled: !!status?.smsEnabled, radioEnabled: !!status?.radioEnabled, controlEnabled: !!status?.controlEnabled }}
             badges={{ messages: status?.smsEnabled ? (status.smsUnread ?? 0) : 0 }}
           />
           <div className="shell-main">
