@@ -91,6 +91,31 @@ export class Collector extends EventEmitter {
     this.restartAt = at;
   }
 
+  /** Hold ordinary polling during maintenance without releasing the router session. */
+  async beginMaintenance(reason = 'Router maintenance') {
+    if (this.state.phase === 'paused' || this.state.phase === 'halted') {
+      throw Object.assign(new Error('Resume the collector before changing router settings'), { status: 409 });
+    }
+    if (this.state.maintenance) throw Object.assign(new Error('Router maintenance is already running'), { status: 409 });
+    this.state.maintenance = { reason, since: Date.now() };
+    clearTimeout(this.timer);
+    this.state.nextAttemptAt = null;
+    this.emit('change');
+    // A running poll checks the hold between reads and always emits on completion.
+    while (this.inFlight) await new Promise((resolve) => this.once('change', resolve));
+    // Drain reads that were queued before the hold; new sampler reads are refused.
+    if (this.client.queue) await this.client.queue.run(async () => {});
+  }
+
+  endMaintenance() {
+    if (!this.state.maintenance) return;
+    this.state.maintenance = null;
+    this.fullStatus = null;
+    this.lastStatusPoll = 0;
+    if (this.state.phase !== 'paused' && this.state.phase !== 'halted') this.#schedule(0);
+    this.emit('change');
+  }
+
   // Why the router stopped answering: the restart Insight asked for, if the outage began
   // within a few minutes of it, otherwise the kind of error.
   #outageReason() {
@@ -129,7 +154,7 @@ export class Collector extends EventEmitter {
    * for the next interval. Throttled so a burst of traps causes one poll.
    */
   pollNow() {
-    if (this.state.phase !== 'ok' || clock() - this.lastPollNow < 5000) return;
+    if (this.state.maintenance || this.state.phase !== 'ok' || clock() - this.lastPollNow < 5000) return;
     this.lastPollNow = clock();
     this.pollNowGen++;
     this.lastLogPoll = 0;
@@ -151,7 +176,7 @@ export class Collector extends EventEmitter {
   }
 
   async #tick() {
-    const stopped = () => this.state.phase === 'paused' || this.state.phase === 'halted';
+    const stopped = () => this.state.maintenance || this.state.phase === 'paused' || this.state.phase === 'halted';
     if (stopped()) return;
     // Never two polls at once (e.g. resume() while a paused poll is still unwinding).
     if (this.inFlight) {

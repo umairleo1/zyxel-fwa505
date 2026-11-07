@@ -9,10 +9,11 @@ import { liveRoutes } from './routes/live.js';
 import { smsRoutes } from './routes/sms.js';
 import { radioRoutes } from './routes/radio.js';
 import { rebootRoutes } from './routes/reboot.js';
+import { controlRoutes } from './routes/control.js';
 import { basicAuth, csrfGuard, hostGuard, isLoopback, liveAllowedHostnames, securityHeaders } from './security.js';
 
 /**
- * Build the Express app. deps: { db, hub, collector, routerData, statusPayload, staticDir?,
+ * Build the Express app. deps: { db, hub, collector, internet?, routerData, statusPayload, staticDir?,
  * statusIntervalSec?, security?: { password?, allowedHosts?: Set<string> | () => Set<string> } }
  */
 export function createApp(deps) {
@@ -35,6 +36,16 @@ export function createApp(deps) {
   app.use(express.json({ limit: '16kb' }));
 
   const api = express.Router();
+  // Settings changes and radio trials must not race maintenance or diagnostics.
+  api.use((req, res, next) => {
+    const held = deps.collector.state.maintenance;
+    const conflicting = /^\/(sms|radio|collector)(\/|$)|^\/router\/reboot$/.test(req.path);
+    if (conflicting && (held || (deps.control?.busy && req.method !== 'GET'))) {
+      return res.status(409).json({ error: 'A High control operation is running; wait for it to finish' });
+    }
+    next();
+  });
+  api.use(controlRoutes(deps));
   api.use(logsRoutes(deps));
   api.use(telemetryRoutes(deps));
   api.use(routerDataRoutes(deps));
@@ -51,5 +62,16 @@ export function createApp(deps) {
     app.use(express.static(deps.staticDir));
     app.get(/^(?!\/api\/).*/, (_req, res) => res.sendFile(path.join(deps.staticDir, 'index.html')));
   }
+  app.use((error, _req, res, next) => {
+    if (res.headersSent) return next(error);
+    const tooLarge = error.type === 'entity.too.large';
+    res.status(tooLarge ? 413 : (error.status ?? 500)).json({
+      error: tooLarge
+        ? 'The file or request exceeds the allowed size.'
+        : error.type === 'entity.parse.failed'
+          ? 'Invalid JSON request.'
+          : 'The request could not be processed.',
+    });
+  });
   return app;
 }

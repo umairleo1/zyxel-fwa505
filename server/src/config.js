@@ -18,10 +18,18 @@ export const config = {
   routerPassword: env.ROUTER_PASSWORD || '',
   pollIntervalSec: num(env.POLL_INTERVAL_SEC, 120),
   statusIntervalSec: num(env.STATUS_INTERVAL_SEC, 5),
+  // Internet check: a TCP handshake to the first target every interval (others only when
+  // it fails). ~250 bytes per round, so 1 s costs ~0.7 GB of mobile data a month. 0 disables.
+  internetProbeIntervalSec: num(env.INTERNET_PROBE_INTERVAL_SEC, 1),
+  internetProbeTimeoutMs: num(env.INTERNET_PROBE_TIMEOUT_MS, 1500),
+  internetProbeTargets: csv(env.INTERNET_PROBE_TARGETS || '1.1.1.1:443,8.8.8.8:443'),
   syslogPort: num(env.SYSLOG_PORT, 5514),
   syslogHost: env.SYSLOG_HOST || '0.0.0.0',
   snmpTrapPort: num(env.SNMP_TRAP_PORT, 1162),
   snmpTrapHost: env.SNMP_TRAP_HOST || '0.0.0.0',
+  // Z-console redirects kernel/console output over TCP, separately from UDP syslog.
+  zconsolePort: num(env.ZCONSOLE_PORT, 5515), // 0 disables the receiver
+  zconsoleHost: env.ZCONSOLE_HOST || '0.0.0.0',
   snmpCommunity: env.SNMP_COMMUNITY || '', // empty = accept any community
   // Comma-separated IPs/hostnames allowed to send syslog and SNMP traps. Empty =
   // the router's own address (from ROUTER_URL); loopback is always allowed; "*" = anyone.
@@ -39,6 +47,7 @@ export const config = {
   // The System page can restart the router, as its own Maintenance → Reboot does.
   // REBOOT_ENABLED=false removes the button and the router path.
   rebootEnabled: !/^(0|false|no|off)$/i.test(env.REBOOT_ENABLED ?? ''),
+  controlEnabled: !/^(0|false|no|off)$/i.test(env.HIGH_CONTROL_ENABLED ?? ''),
   // Extra names the dashboard may be reached by (reverse proxy, DNS name), on top of
   // localhost, this machine's addresses and hostname.
   allowedHosts: csv(env.ALLOWED_HOSTS),
@@ -51,6 +60,7 @@ export const config = {
     stationDays: num(env.RETAIN_WIFI_DAYS, 30),
     systemDays: 365,
     trafficDays: 400,
+    internetDays: num(env.RETAIN_INTERNET_DAYS, 90), // one row a minute
   },
   dbPath: path.resolve(ROOT, env.DB_PATH || 'server/data/insight.db'),
 };

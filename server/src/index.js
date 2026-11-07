@@ -8,8 +8,10 @@ import { RouterClient } from './router/client.js';
 import { createRouterData } from './router/data.js';
 import { Collector } from './collector/collector.js';
 import { startSamplers } from './collector/samplers.js';
+import { InternetMonitor, gatewayTarget, parseTargets, signalNote } from './collector/internet.js';
 import { startSyslog } from './ingest/syslog.js';
 import { startSnmpTraps } from './ingest/snmp.js';
+import { startZconsole } from './ingest/zconsole.js';
 import { createEventHub } from './events/hub.js';
 import { createStatus } from './status.js';
 import { createApp } from './http/app.js';
@@ -18,6 +20,7 @@ import { createSourceFilter, defaultSources } from './ingest/guard.js';
 import { createSmsService } from './sms/service.js';
 import { createRadioService } from './radio/service.js';
 import { createRebootService } from './router/reboot.js';
+import { createControlService } from './control/service.js';
 import { findKey } from './lib/util.js';
 
 if (!config.routerPassword) {
@@ -46,6 +49,7 @@ const client = new RouterClient({
   allowSms: config.smsEnabled,
   allowBandSelection: config.radioControlEnabled,
   allowReboot: config.rebootEnabled,
+  allowControl: config.controlEnabled,
 });
 // collector is created below; isReady only runs once the service is started.
 const sms = createSmsService({
@@ -53,7 +57,7 @@ const sms = createSmsService({
   db,
   enabled: config.smsEnabled,
   // Only while the router is being read and someone has Insight open: no one to show a badge to otherwise.
-  isReady: () => collector.state.phase === 'ok' && hub.size > 0,
+  isReady: () => collector.state.phase === 'ok' && !collector.state.maintenance && hub.size > 0,
   // The router has a field for the SIM's own number, but most SIMs leave it empty.
   simNumber: async () => {
     const live = collector.state.router?.cellwan?.USIM_MSISDN;
@@ -67,6 +71,15 @@ const radio = createRadioService({ client, db, enabled: config.radioControlEnabl
 const collector = new Collector({ client, db, pollIntervalSec: config.pollIntervalSec, statusIntervalSec: config.statusIntervalSec });
 const routerData = createRouterData({ client, collector });
 const reboot = createRebootService({ client, db, collector, enabled: config.rebootEnabled, onChange: () => pushStatus() });
+const control = createControlService({
+  client,
+  db,
+  collector,
+  radio,
+  routerData,
+  enabled: config.controlEnabled,
+  onChange: () => pushStatus(),
+});
 // Only the router (plus loopback) may feed the log, unless INGEST_ALLOWED_SOURCES says otherwise.
 const sources = createSourceFilter(config.ingestAllowedSources.length ? config.ingestAllowedSources : defaultSources(config.routerUrl));
 const syslog = startSyslog({ host: config.syslogHost, port: config.syslogPort, db, allows: sources.allows });
@@ -79,14 +92,31 @@ const snmp = startSnmpTraps({
   // A trap means something just changed (reboot, link drop): fetch fresh status and logs now.
   onTrap: () => collector.pollNow(),
 });
+const zconsole = config.zconsolePort
+  ? startZconsole({ host: config.zconsoleHost, port: config.zconsolePort, db, allows: sources.allows })
+  : null;
 const samplers = startSamplers({ routerData, db, emit: (what) => hub.broadcast(what, { at: Date.now() }) });
-const statusPayload = createStatus({ config, collector, syslog, snmp, client, sms, radio, reboot });
+// Whether data gets through, which the router's own status can't tell (it can stay "up" through a stall).
+const internet =
+  config.internetProbeIntervalSec > 0 && config.internetProbeTargets.length
+    ? new InternetMonitor({
+        db,
+        targets: parseTargets(config.internetProbeTargets),
+        gateway: gatewayTarget(config.routerUrl),
+        intervalMs: config.internetProbeIntervalSec * 1000,
+        timeoutMs: config.internetProbeTimeoutMs,
+        context: () => signalNote(collector.state.router?.signal),
+        onChange: () => pushStatus(),
+      })
+    : null;
+const statusPayload = createStatus({ config, collector, syslog, snmp, client, sms, radio, reboot, control, zconsole, internet });
 
 // Status changes on every poll and every syslog/trap packet: push at most once per second.
 const pushStatus = hub.throttled('status', statusPayload, 1000);
 collector.on('change', pushStatus);
 hub.onLogs(pushStatus);
 collector.start();
+internet?.start();
 sms.start();
 radio.start();
 
@@ -162,10 +192,12 @@ const app = createApp({
   db,
   hub,
   collector,
+  internet,
   routerData,
   sms: config.smsEnabled ? sms : null,
   radio: config.radioControlEnabled ? radio : null,
   reboot: config.rebootEnabled ? reboot : null,
+  control: config.controlEnabled ? control : null,
   statusPayload,
   statusIntervalSec: config.statusIntervalSec,
   security: {
@@ -203,9 +235,12 @@ async function shutdown(code = 0) {
     server.close();
     syslog.close();
     snmp.close();
+    zconsole?.close();
     samplers.stop();
+    internet?.stop();
     sms.stop();
     radio.stop();
+    await control.stop();
     await collector.stop();
     db.close();
   } catch (e) {

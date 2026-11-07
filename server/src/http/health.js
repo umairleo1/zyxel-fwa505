@@ -11,6 +11,7 @@ export function healthOf(state, { statusIntervalSec, startedAt, now = Date.now()
   const ageMs = now - (lastSuccessAt ?? startedAt);
   const body = { status: phase, phase, lastSuccessAt, ageSec: Math.round(ageMs / 1000) };
   if (phase === 'halted') return { code: 503, body };
+  if (state.maintenance) return { code: 200, body: { ...body, status: 'maintenance', maintenance: state.maintenance } };
   if (phase === 'paused') return { code: 200, body };
   if (ageMs > staleAfterMs) return { code: 503, body: { ...body, status: 'stale' } };
   return { code: 200, body: { ...body, status: phase === 'ok' ? 'ok' : phase } };
