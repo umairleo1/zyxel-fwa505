@@ -5,6 +5,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { decodeGsm } from '@zyxel-insight/shared/sms';
+import { createControlMock } from './control-mock.js';
 
 const PORT = Number(process.env.MOCK_PORT || 8081);
 // MOCK_WAN_DROP=90/600: mobile data drops for 90 s out of every 600 s (the router stays
@@ -12,13 +13,23 @@ const PORT = Number(process.env.MOCK_PORT || 8081);
 const [WAN_DOWN_SEC, WAN_CYCLE_SEC] = (process.env.MOCK_WAN_DROP ?? '').split('/').map(Number);
 const wanDown = () => WAN_CYCLE_SEC > 0 && (Date.now() / 1000) % WAN_CYCLE_SEC < WAN_DOWN_SEC;
 const PASSWORD = 'mock';
-const sessions = new Set();
+const sessions = new Map();
 let bootAt = Date.now() - 3 * 86400 * 1000;
 // After POST /cgi-bin/Reboot the router stops answering until this time, then boots afresh.
 let downUntil = 0;
-const REBOOT_SEC = 45;
+const REBOOT_SEC = Number(process.env.MOCK_REBOOT_SEC ?? 45);
 const system = [];
 const security = [];
+const controls = createControlMock({
+  sessions,
+  // High control restarts take as long as a reboot, after answering for a moment like the real router.
+  rebootMs: REBOOT_SEC * 1000,
+  lingerMs: 2000,
+  onRestart: (_kind, ms) => {
+    downUntil = Date.now() + ms;
+    bootAt = downUntil;
+  },
+});
 
 const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const stamp = (d = new Date()) => `${MON[d.getMonth()]} ${String(d.getDate()).padStart(2, ' ')} ${d.toTimeString().slice(0, 8)}`;
@@ -167,7 +178,7 @@ const sendEscaped = (res, obj) =>
   );
 
 http
-  .createServer((req, res) => {
+  .createServer(async (req, res) => {
     const url = new URL(req.url, 'http://x');
     const cookie = /Authentication=([^;]+)/.exec(req.headers.cookie || '')?.[1];
     const authed = cookie && sessions.has(cookie);
@@ -175,23 +186,11 @@ http
     // Restarting: no web server, so connections just fail, as with the real router.
     if (Date.now() < downUntil) return req.socket.destroy();
 
-    if (url.pathname === '/getRSAPublickKey') return send(res, 200, { RSAPublicKey: 'None' });
-    if (url.pathname === '/UserLogin' && req.method === 'POST') {
-      let body = '';
-      req.on('data', (c) => (body += c));
-      req.on('end', () => {
-        const b = JSON.parse(body);
-        if (Buffer.from(b.Input_Passwd, 'base64').toString() !== PASSWORD)
-          return send(res, 401, { result: 'Invalid Username or Password' });
-        const token = crypto.randomBytes(16).toString('hex');
-        sessions.add(token);
-        send(
-          res,
-          200,
-          { sessionkey: crypto.randomInt(1e9), loginAccount: b.Input_Account, loginLevel: 'administrator' },
-          { 'Set-Cookie': `Authentication=${token}; Path=/; HttpOnly; Secure` },
-        );
-      });
+    try {
+      if (await controls.handleAuth(req, res)) return;
+      if (await controls.handle(req, res)) return;
+    } catch {
+      if (!res.headersSent) send(res, 400, { result: 'ZCFG_INVALID_PARAM_VALUE' });
       return;
     }
     if (!authed) return send(res, 401, { result: 'Unauthorized' });
