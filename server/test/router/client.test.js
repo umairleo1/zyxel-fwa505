@@ -307,3 +307,11 @@ test('a dropped connection during a restart is not retried', async (t) => {
   await assert.rejects(client.reboot(), /socket hang up|ECONNRESET/);
   assert.equal(r.seen.length, 1);
 });
+
+test('a router still starting up (5xx on login) never counts as a failed password', async () => {
+  const r = await fakeRouter([[503, { result: 'Service Unavailable' }]]);
+  for (let k = 0; k < 3; k++) await assert.rejects(r.client.getStatus(), (e) => e.kind === 'network');
+  assert.equal(r.client.failedLogins.length, 0);
+  assert.equal(r.seen.logins, 3);
+  r.close();
+});

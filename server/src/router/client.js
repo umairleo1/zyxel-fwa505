@@ -1,6 +1,7 @@
 import http from 'node:http';
 import https from 'node:https';
 import tls from 'node:tls';
+import { randomUUID } from 'node:crypto';
 import { RequestQueue } from './queue.js';
 
 const LOAD_WINDOW_MS = 60_000;
@@ -21,6 +22,48 @@ const SMS_PARAMS = new Set(['oid', 'sessionkey', 'timedelay', 'objIndex']);
 const BAND_PARAMS = new Set(['oid', 'sessionkey']);
 // The restart path (see #isRebootWrite): what the router's Maintenance → Reboot page POSTs.
 const REBOOT_PATH = '/cgi-bin/Reboot';
+const CONTROL_READS = new Set([
+  'periodic_FOTA_config',
+  'online_fw_info',
+  'zconsole',
+  'wan',
+  'user_account',
+  'login_privilege',
+  'PINGTEST',
+  'IPERFTEST',
+  'backupRestore_config',
+]);
+const CONTROL_WRITES = {
+  periodic_FOTA_config: ['PUT'],
+  zconsole: ['PUT'],
+  wan: ['PUT', 'POST'],
+  user_account: ['PUT', 'POST', 'DELETE'],
+  login_privilege: ['PUT'],
+  PINGTEST: ['PUT'],
+  IPERFTEST: ['PUT'],
+  backupRestore_config: ['PUT'],
+};
+const CONTROL_ACTIONS = {
+  firmwareCheck: ['GET', '/cgi-bin/Online_Firmware_Upgrade'],
+  firmwareInstall: ['GET', '/cgi-bin/Online_Firmware_Upgrade?action=online'],
+  romdSave: ['POST', '/cgi-bin/ROMD?action=save'],
+  romdClear: ['POST', '/cgi-bin/ROMD?action=clean'],
+  partialReset: ['POST', '/cgi-bin/Backup_Restore?action=PartialReset'],
+};
+const MAX_CONFIG_BYTES = 16 * 1024 * 1024;
+const MAX_CONTROL_JSON_BYTES = 1024 * 1024;
+
+function safeDownloadName(value, fallback = 'router-configuration.rom') {
+  const name = String(value ?? '')
+    .split(/[\\/]/)
+    .at(-1)
+    .split('')
+    .filter((character) => character.charCodeAt(0) >= 32 && character.charCodeAt(0) !== 127)
+    .join('')
+    .replace(/[";]/g, '')
+    .trim();
+  return name && name !== '.' && name !== '..' ? name.slice(0, 120) : fallback;
+}
 
 export class RouterError extends Error {
   /** kind: network | auth | duplicate | max-sessions | session | http | tls | paused */
@@ -107,6 +150,7 @@ export class RouterClient {
     allowSms = false,
     allowBandSelection = false,
     allowReboot = false,
+    allowControl = false,
   }) {
     this.base = new URL(baseUrl);
     this.mod = this.base.protocol === 'https:' ? https : http;
@@ -115,6 +159,7 @@ export class RouterClient {
     this.allowSms = allowSms;
     this.allowBandSelection = allowBandSelection;
     this.allowReboot = allowReboot;
+    this.allowControl = allowControl;
     // No keep-alive: the router drops idle connections between our polls, and
     // reusing a dead socket fails with "socket hang up".
     this.agent = new this.mod.Agent({ keepAlive: false, rejectUnauthorized: false });
@@ -132,6 +177,7 @@ export class RouterClient {
     this.password = password;
     this.cookies = new Map();
     this.sessionKey = null;
+    this.loginLevel = null;
     // Requests run one at a time (see queue.js); the live signal read jumps the queue.
     this.queue = new RequestQueue({ gapMs: requestGapMs, onRun: ({ waitMs }) => this.#recordWait(waitMs) });
     /** Called with (path, parsedJson) after every successful GET, so caches can share results. */
@@ -283,6 +329,7 @@ export class RouterClient {
     this.stats.logins++;
     this.cookies.clear();
     this.sessionKey = null;
+    this.loginLevel = null;
     // The UI fetches the RSA key first; payloads are only encrypted over plain
     // HTTP, but call it anyway to match the real login sequence.
     await this.#request('GET', '/getRSAPublickKey');
@@ -296,6 +343,7 @@ export class RouterClient {
     const data = tryJson(res.text);
     if (res.status === 200 && data?.sessionkey) {
       this.sessionKey = String(data.sessionkey);
+      this.loginLevel = ['high', 'medium', 'low'].includes(data.loginLevel) ? data.loginLevel : null;
       this.failedLogins = [];
       return data;
     }
@@ -314,6 +362,9 @@ export class RouterClient {
       return block('duplicate', `Router reports a duplicated login: ${detail}`, now + SESSION_CONFLICT_BACKOFF_MS);
     if (/Maxi?mum number/i.test(res.text))
       return block('max-sessions', `Router login limit reached: ${detail}`, now + SESSION_CONFLICT_BACKOFF_MS);
+    // A web server that is still starting (after a restart or firmware install) answers 5xx:
+    // the password was never checked, so it isn't a failed attempt.
+    if (res.status >= 500) return new RouterError('network', `Router not ready to log in (HTTP ${res.status})`, res.status);
     // Anything else counts as a failed password attempt, even if the reply is unfamiliar.
     this.failedLogins.push(now);
     if (res.status === 401 || res.status === 403 || BAD_PASSWORD.test(detail) || this.failedLogins.length >= MAX_FAILED_LOGINS)
@@ -330,6 +381,7 @@ export class RouterClient {
     if (!this.sessionKey) return;
     const key = this.sessionKey;
     this.sessionKey = null;
+    this.loginLevel = null;
     try {
       await this.#request('POST', `/cgi-bin/UserLogout?sessionkey=${encodeURIComponent(key)}`);
     } finally {
@@ -483,6 +535,217 @@ export class RouterClient {
     return data;
   }
 
+  #requireControl() {
+    if (!this.allowControl) throw new RouterError('permission', 'Router controls are disabled', 403);
+    if (this.suspended) throw this.#paused();
+  }
+
+  async #controlSession() {
+    this.#requireControl();
+    if (!this.hasSession) await this.#login();
+  }
+
+  #controlStatus(res, label) {
+    if (res.status === 403) throw new RouterError('permission', `Router denied ${label} for this account`, 403);
+    if (res.status === 401) {
+      this.sessionKey = null;
+      this.loginLevel = null;
+      throw new RouterError('session', `Router session expired during ${label}; the operation was not retried`, 401);
+    }
+    if (res.status !== 200) throw new RouterError('http', `${label}: router HTTP ${res.status}`, res.status === 404 ? 404 : 502);
+  }
+
+  async #controlJson(method, path, body, { safe = false, dal = false, timeoutMs = 30_000, requireSuccess = method !== 'GET' } = {}) {
+    const options = { control: true, timeoutMs, maxBytes: MAX_CONTROL_JSON_BYTES };
+    let res = safe ? await this.#request(method, path, body, options) : await this.#send(method, path, body, options);
+    // As for ordinary reads: an expired session answers 401 or 403, and a read is safe to repeat once.
+    if (safe && (res.status === 401 || res.status === 403)) {
+      await this.#login();
+      res = await this.#request(method, path, body, options);
+    }
+    this.#controlStatus(res, 'control request');
+    const data = tryJson(res.text);
+    if (!data || typeof data !== 'object') throw new RouterError('http', 'Router returned an invalid control response', 502);
+    const result = data.result ?? data.Ret;
+    if (requireSuccess && result === undefined) throw new RouterError('http', 'Router did not confirm the control operation', 502);
+    if (result !== undefined && result !== 'ZCFG_SUCCESS') {
+      const permission = /permission|privilege|denied|not.authori[sz]ed|forbidden/i.test(`${result} ${data.ReplyMsg ?? ''}`);
+      const invalid = /INVALID|PARAMETER/.test(String(result));
+      throw new RouterError(
+        permission ? 'permission' : 'http',
+        permission ? 'Router denied this control operation' : `Router refused the operation (${String(result).slice(0, 80)})`,
+        permission ? 403 : invalid ? 400 : 502,
+      );
+    }
+    if (dal && (!Array.isArray(data.Object) || result !== 'ZCFG_SUCCESS'))
+      throw new RouterError('http', 'Router returned an invalid DAL response', 502);
+    return method === 'GET' ? unescapeDeep(data) : data;
+  }
+
+  /** Session privilege and public firmware flags. Credentials and account records are never included. */
+  controlInfo() {
+    return this.#serial(async () => {
+      await this.#controlSession();
+      const levelReply = await this.#controlJson('GET', '/cgi-bin/loginAccountLevel', undefined, { safe: true });
+      const level = levelReply?.[0]?.level;
+      if (!['high', 'medium', 'low'].includes(level)) throw new RouterError('http', 'Router returned an unknown account level', 502);
+      this.loginLevel = level;
+      const flags = await this.#controlJson('GET', '/getWebGuiFlag', undefined, { safe: true });
+      const customization = await this.#controlJson('GET', '/getCustomizationData', undefined, { safe: true });
+      const basic = await this.#controlJson('GET', '/getBasicInformation', undefined, { safe: true });
+      return {
+        level,
+        flags: { ...flags, ...customization },
+        device: { ModelName: basic.ModelName, SoftwareVersion: basic.SoftwareVersion },
+      };
+    });
+  }
+
+  controlRead(oid) {
+    return this.#serial(async () => {
+      this.#requireControl();
+      if (!CONTROL_READS.has(oid)) throw new RouterError('http', 'Unsupported router control read', 400);
+      await this.#controlSession();
+      return this.#controlJson('GET', `/cgi-bin/DAL?${new URLSearchParams({ oid })}`, undefined, { safe: true, dal: true });
+    });
+  }
+
+  /** Deliberately narrow DAL transport. Authorization and field validation also live in the control service. */
+  controlWrite(oid, method, body) {
+    return this.#serial(async () => {
+      this.#requireControl();
+      if (!Object.hasOwn(CONTROL_WRITES, oid) || !CONTROL_WRITES[oid].includes(method))
+        throw new RouterError('http', 'Unsupported router control write', 400);
+      if (!body || typeof body !== 'object' || Buffer.byteLength(JSON.stringify(body)) > MAX_CONTROL_JSON_BYTES)
+        throw new RouterError('http', 'Invalid router control body', 400);
+      await this.#controlSession();
+      const query = new URLSearchParams({ oid, sessionkey: this.sessionKey });
+      if (method === 'DELETE') {
+        if (oid !== 'user_account' || typeof body.Username !== 'string' || Object.keys(body).some((k) => k !== 'Username'))
+          throw new RouterError('http', 'An account deletion requires only its username', 400);
+        query.set('Username', body.Username);
+        body = undefined;
+      }
+      return this.#controlJson(method, `/cgi-bin/DAL?${query}`, body);
+    }, 'high');
+  }
+
+  controlAction(name) {
+    return this.#serial(async () => {
+      this.#requireControl();
+      const action = Object.hasOwn(CONTROL_ACTIONS, name) ? CONTROL_ACTIONS[name] : null;
+      if (!action) throw new RouterError('http', 'Unsupported router control action', 400);
+      await this.#controlSession();
+      const [method, path] = action;
+      const url = new URL(path, this.base);
+      if (method !== 'GET') url.searchParams.set('sessionkey', this.sessionKey);
+      const data = await this.#controlJson(method, `${url.pathname}${url.search}`, undefined, {
+        timeoutMs: name === 'firmwareInstall' ? 300_000 : 30_000,
+      });
+      if (name === 'firmwareInstall' || name === 'partialReset') {
+        this.sessionKey = null;
+        this.loginLevel = null;
+        this.cookies.clear();
+      }
+      return data;
+    }, 'high');
+  }
+
+  /** A ROM-D selection flag and its export form one queue job and are never retried. */
+  controlDownload(kind) {
+    return this.#serial(async () => {
+      this.#requireControl();
+      if (!['configuration', 'romd'].includes(kind)) throw new RouterError('http', 'Unsupported configuration download', 400);
+      await this.#controlSession();
+      if (kind === 'romd') {
+        const tag = await this.#controlJson('GET', '/tagRomdBackupFlag');
+        if (Number(tag.Recv_tagRomdBackupFlag) !== 1) throw new RouterError('http', 'Router did not select ROM-D for export', 502);
+      }
+      const path = `/cgi-bin/Backup_Restore?${new URLSearchParams({ action: 'Backup', sessionkey: this.sessionKey })}`;
+      const res = await this.#send('GET', path, undefined, { control: true, timeoutMs: 30_000, maxBytes: MAX_CONFIG_BYTES });
+      this.#controlStatus(res, 'configuration download');
+      const type = String(res.headers['content-type'] ?? 'application/octet-stream').split(';')[0];
+      if (!res.body.length || /html/i.test(type) || /^\s*(?:<!doctype|<html|<form)/i.test(res.text))
+        throw new RouterError('http', 'Router returned a login page or empty configuration download', 502);
+      const json = tryJson(res.text);
+      if (json && (json.result || json.Ret))
+        throw new RouterError('http', 'Router returned a status response instead of a configuration file', 502);
+      const disposition = String(res.headers['content-disposition'] ?? '');
+      let name = /filename\*=UTF-8''([^;]+)/i.exec(disposition)?.[1] ?? /filename="?([^";]+)/i.exec(disposition)?.[1];
+      try {
+        name = decodeURIComponent(name ?? '');
+      } catch {
+        name = '';
+      }
+      return {
+        body: res.body,
+        filename: safeDownloadName(name, kind === 'romd' ? 'router-defaults.rom' : 'router-configuration.rom'),
+        contentType: type,
+      };
+    }, 'high');
+  }
+
+  controlRestore(buffer, filename = 'configuration.rom') {
+    return this.#serial(async () => {
+      this.#requireControl();
+      if (!Buffer.isBuffer(buffer) || !buffer.length || buffer.length > MAX_CONFIG_BYTES)
+        throw new RouterError('http', 'Configuration upload must contain between 1 byte and 16 MiB', 400);
+      await this.#controlSession();
+      const boundary = `insight-${randomUUID()}`;
+      const body = Buffer.concat([
+        Buffer.from(
+          `--${boundary}\r\nContent-Disposition: form-data; name="mtenRestoreCfg"; filename="${safeDownloadName(filename)}"\r\nContent-Type: application/octet-stream\r\n\r\n`,
+        ),
+        buffer,
+        Buffer.from(`\r\n--${boundary}--\r\n`),
+      ]);
+      const path = `/cgi-bin/Backup_Restore?${new URLSearchParams({ action: 'Restore', sessionkey: this.sessionKey })}`;
+      const res = await this.#send('POST', path, undefined, {
+        control: true,
+        rawBody: body,
+        contentType: `multipart/form-data; boundary=${boundary}`,
+        timeoutMs: 120_000,
+        maxBytes: MAX_CONTROL_JSON_BYTES,
+      });
+      this.#controlStatus(res, 'configuration restore');
+      const data = tryJson(res.text);
+      if (data && (data.result ?? data.Ret) !== 'ZCFG_SUCCESS')
+        throw new RouterError('http', 'Router refused the configuration restore', 502);
+      if (!data && res.text.trim() && !/ZCFG_SUCCESS/.test(res.text))
+        throw new RouterError('http', 'Router returned an unexpected restore response', 502);
+      this.sessionKey = null;
+      this.loginLevel = null;
+      this.cookies.clear();
+      return data ?? { result: 'ZCFG_SUCCESS' };
+    }, 'high');
+  }
+
+  /**
+   * Whether the router's web server answers at all, without logging in: used to watch a
+   * restart go down and come back without spending login attempts on a half-started router.
+   */
+  probe() {
+    return this.#serial(async () => {
+      if (this.suspended) return false;
+      try {
+        const res = await this.#send('GET', '/getRSAPublickKey', undefined, { timeoutMs: 5_000 });
+        return res.status === 200;
+      } catch {
+        return false;
+      }
+    }, 'high');
+  }
+
+  diagnosticResult() {
+    return this.#serial(async () => {
+      await this.#controlSession();
+      const data = await this.#controlJson('GET', '/cgi-bin/Diagnostic_Result', undefined, { safe: true });
+      if (!Array.isArray(data) || typeof data[0]?.result !== 'string')
+        throw new RouterError('http', 'Router returned an invalid diagnostic result', 502);
+      return data;
+    });
+  }
+
   /** Lines of the router's native log. type: 'system' | 'security'. */
   async getLog(type) {
     const iid = type === 'security' ? '[2,0,0,0,0,0]' : '[1,0,0,0,0,0]';
@@ -505,24 +768,24 @@ export class RouterClient {
     return Array.isArray(data?.Object) ? data.Object[0] : data;
   }
 
-  async #request(method, path, json) {
+  async #request(method, path, json, options) {
     try {
-      return await this.#send(method, path, json);
+      return await this.#send(method, path, json, options);
     } catch (e) {
       // A reset connection is safe to retry once for reads.
       if (method !== 'GET' || !/socket hang up|ECONNRESET|EPIPE/.test(e.message)) throw e;
       await new Promise((r) => setTimeout(r, 1000));
-      return this.#send(method, path, json);
+      return this.#send(method, path, json, options);
     }
   }
 
-  #send(method, path, json) {
+  #send(method, path, json, options) {
     const started = Date.now();
     this.inFlightSince = started;
-    return this.#sendRaw(method, path, json).then(
+    return this.#sendRaw(method, path, json, options).then(
       (res) => {
         this.inFlightSince = null;
-        this.#record(path, Date.now() - started, res.text.length, res.status < 400);
+        this.#record(path, Date.now() - started, res.body.length, res.status < 400);
         return res;
       },
       (err) => {
@@ -533,32 +796,82 @@ export class RouterClient {
     );
   }
 
-  #sendRaw(method, path, json) {
+  #isControlRequest(method, url) {
+    if (!this.allowControl || url.origin !== this.base.origin) return false;
+    const keys = [...url.searchParams.keys()];
+    if (url.pathname === '/cgi-bin/DAL') {
+      const oid = url.searchParams.get('oid');
+      return (
+        url.searchParams.getAll('oid').length === 1 &&
+        keys.every((k) => ['oid', 'sessionkey', 'Username'].includes(k)) &&
+        (method === 'GET' ? CONTROL_READS.has(oid) : Object.hasOwn(CONTROL_WRITES, oid) && CONTROL_WRITES[oid].includes(method))
+      );
+    }
+    if (
+      method === 'GET' &&
+      [
+        '/cgi-bin/loginAccountLevel',
+        '/getWebGuiFlag',
+        '/getCustomizationData',
+        '/getBasicInformation',
+        '/cgi-bin/Diagnostic_Result',
+        '/tagRomdBackupFlag',
+      ].includes(url.pathname)
+    )
+      return keys.length === 0;
+    if (url.pathname === '/cgi-bin/Backup_Restore')
+      return (
+        keys.every((k) => ['action', 'sessionkey'].includes(k)) &&
+        (method === 'GET'
+          ? url.searchParams.get('action') === 'Backup'
+          : method === 'POST' && ['Restore', 'PartialReset'].includes(url.searchParams.get('action')))
+      );
+    return Object.values(CONTROL_ACTIONS).some(([m, p]) => {
+      const native = new URL(p, this.base);
+      return (
+        m === method &&
+        native.pathname === url.pathname &&
+        (native.searchParams.get('action') ?? '') === (url.searchParams.get('action') ?? '') &&
+        keys.every((k) => ['action', 'sessionkey'].includes(k))
+      );
+    });
+  }
+
+  #sendRaw(method, path, json, options = {}) {
     const url = new URL(path, this.base);
+    const actionGet = [
+      '/cgi-bin/Online_Firmware_Upgrade',
+      '/cgi-bin/Backup_Restore',
+      '/tagRomdBackupFlag',
+      '/tagRestoreDefaultFlag',
+      '/tagPartialRestoreDefaultFlag',
+    ].includes(url.pathname);
     const allowed =
-      method === 'GET' ||
+      (method === 'GET' && !actionGet) ||
       path === '/UserLogin' ||
       url.pathname === '/cgi-bin/UserLogout' ||
       this.#isSmsWrite(method, url) ||
       this.#isBandWrite(method, url) ||
-      this.#isRebootWrite(method, url);
+      this.#isRebootWrite(method, url) ||
+      (options.control && this.#isControlRequest(method, url));
     if (!allowed || /DEL_LOG/i.test(url.search)) {
       return Promise.reject(new Error(`Refusing ${method} ${url.pathname}${url.search}: Insight is read-only`));
     }
-    const body = json === undefined ? undefined : JSON.stringify(json);
+    const body = options.rawBody ?? (json === undefined ? undefined : JSON.stringify(json));
     const headers = {
       Accept: 'application/json, text/javascript, */*; q=0.01',
       'X-Requested-With': 'XMLHttpRequest',
       'If-Modified-Since': 'Thu, 01 Jun 1970 00:00:00 GMT',
     };
     if (body) {
-      headers['Content-Type'] = 'application/json';
+      headers['Content-Type'] = options.contentType ?? 'application/json';
       headers['Content-Length'] = Buffer.byteLength(body);
     }
     if (this.cookies.size) headers.Cookie = [...this.cookies].map(([k, v]) => `${k}=${v}`).join('; ');
 
     return new Promise((resolve, reject) => {
-      const req = this.mod.request(url, { method, headers, agent: this.agent, timeout: 15_000 }, (res) => {
+      const timeoutMs = options.timeoutMs ?? 15_000;
+      const req = this.mod.request(url, { method, headers, agent: this.agent, timeout: timeoutMs }, (res) => {
         for (const cookie of res.headers['set-cookie'] ?? []) {
           const pair = cookie.split(';')[0];
           const i = pair.indexOf('=');
@@ -569,11 +882,23 @@ export class RouterClient {
           else this.cookies.set(name, value);
         }
         const chunks = [];
-        res.on('data', (c) => chunks.push(c));
-        res.on('end', () => resolve({ status: res.statusCode, text: Buffer.concat(chunks).toString('utf8') }));
+        let size = 0;
+        res.on('data', (c) => {
+          size += c.length;
+          if (size > (options.maxBytes ?? MAX_CONFIG_BYTES)) {
+            res.destroy();
+            req.destroy(new RouterError('http', 'Router response exceeded the size limit', 502));
+            return;
+          }
+          chunks.push(c);
+        });
+        res.on('end', () => {
+          const body = Buffer.concat(chunks);
+          resolve({ status: res.statusCode, text: body.toString('utf8'), body, headers: res.headers });
+        });
         res.on('error', (e) => reject(new RouterError('network', e.message)));
       });
-      req.on('timeout', () => req.destroy(new Error(`Timed out after 15 s`)));
+      req.on('timeout', () => req.destroy(new Error(`Timed out after ${Math.ceil(timeoutMs / 1000)} s`)));
       req.on('error', (e) => reject(e instanceof RouterError ? e : new RouterError('network', `${method} ${url.pathname}: ${e.message}`)));
       if (body) req.write(body);
       req.end();

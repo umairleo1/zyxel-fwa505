@@ -28,14 +28,18 @@ export function createRouterData({ client, collector, liveTtlMs = 15_000, config
     const hit = cache.get(path);
     if (hit && Date.now() - hit.at < maxAgeMs) return hit;
     const phase = collector.state.phase;
-    if (!READABLE.has(phase)) {
+    if (collector.state.maintenance || !READABLE.has(phase)) {
       if (hit) return { ...hit, stale: true };
       const why = {
         paused: 'Collector is paused; resume it to read live router data',
         halted: 'Router login is halted',
         backoff: 'Router is unavailable; waiting for the collector to reconnect',
       };
-      const e = new Error(why[phase] ?? `Collector is ${phase}`);
+      const e = new Error(
+        collector.state.maintenance
+          ? 'Router maintenance is running; live reads will resume afterwards'
+          : (why[phase] ?? `Collector is ${phase}`),
+      );
       e.status = 409;
       throw e;
     }
@@ -52,6 +56,9 @@ export function createRouterData({ client, collector, liveTtlMs = 15_000, config
   }
 
   return {
+    invalidate() {
+      cache.clear();
+    },
     has: (id) => known(id),
     ids: () => Object.keys(CATALOG),
 
