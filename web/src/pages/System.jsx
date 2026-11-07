@@ -3,7 +3,7 @@ import { api } from '../api/client.js';
 import { useAsync, useRouterData } from '../hooks/index.js';
 import { useLive } from '../app/live.js';
 import { formatDuration, formatFull } from '../lib/format.js';
-import { OUTAGE_KINDS } from '../lib/timeline.js';
+import { OUTAGE_KINDS, outageTone } from '../lib/timeline.js';
 import { DataTable, KV, PageHeader, Panel, Stat, Uptime, PageLoader } from '../components/ui/index.js';
 import { SERIES as SERIES_BY_ID, rangeOptions } from '../lib/domain.js';
 import Segmented from '../components/ui/Segmented.jsx';
@@ -12,6 +12,8 @@ import Legend from '../components/charts/Legend.jsx';
 import RestartRouter from '../features/system/RestartRouter.jsx';
 
 const SERIES = [SERIES_BY_ID.cpu, SERIES_BY_ID.memory];
+const RTT_SERIES = [SERIES_BY_ID.rttAvg, SERIES_BY_ID.rttMax];
+const FAILED_SERIES = [SERIES_BY_ID.failedPct];
 
 export default function System() {
   const { status, ticks } = useLive();
@@ -32,6 +34,16 @@ export default function System() {
   const cpuAvg = recent.length ? Math.round((recent.reduce((a, p) => a + p.cpu, 0) / recent.length) * 10) / 10 : s?.cpu;
   const cpuPeak = recent.length ? Math.max(...recent.map((p) => p.cpu)) : null;
   const dev = st?.DeviceInfo ?? router?.device;
+  const check = status?.internet;
+  const internetPoints = (sys.data?.internet?.points ?? []).map((x) => ({
+    t: x.t,
+    rttAvg: x.rtt_avg,
+    rttMax: x.rtt_max,
+    failedPct: x.failed_pct,
+  }));
+  // Minute rows, bucketed on long ranges: a line breaks only where more than a bucket or two is missing.
+  const internetGapMs = Math.max(5 * 60e3, 2.5 * (sys.data?.internet?.bucketMs ?? 60e3));
+  const chartRange = { from: sys.data?.from ?? Date.now() - span, to: sys.data?.to ?? Date.now() };
 
   return (
     <div className="page">
@@ -83,6 +95,48 @@ export default function System() {
         />
       </Panel>
 
+      {check && (
+        <div className="two-col">
+          <Panel
+            title="Internet check · connect time"
+            subtitle={`A TCP connection to ${check.targets.join(' or ')} every ${check.intervalMs / 1000} s${check.rttMs != null ? ` · now ${check.rttMs} ms via ${check.via}` : ''}`}
+            actions={<Legend series={RTT_SERIES} />}
+            flush
+          >
+            <TimeSeries
+              points={internetPoints}
+              series={RTT_SERIES}
+              {...chartRange}
+              height={180}
+              format={(v) => `${Math.round(v)} ms`}
+              yMin={0}
+              gapMs={internetGapMs}
+              empty="Collecting — the first minute appears shortly."
+              coverage={sys.data?.coverage}
+            />
+          </Panel>
+          <Panel
+            title="Internet check · failed"
+            subtitle="Share of checks with no reply while the router answered; three in a row is a stall"
+            actions={<Legend series={FAILED_SERIES} />}
+            flush
+          >
+            <TimeSeries
+              points={internetPoints}
+              series={FAILED_SERIES}
+              {...chartRange}
+              height={180}
+              format={(v) => `${Math.round(v)}%`}
+              yMin={0}
+              yMax={100}
+              gapMs={internetGapMs}
+              empty="Collecting — the first minute appears shortly."
+              coverage={sys.data?.coverage}
+            />
+          </Panel>
+        </div>
+      )}
+
       <div className="two-col">
         <Panel title="Reboots" subtitle="Detected from uptime; survives Insight restarts" flush>
           <DataTable
@@ -116,7 +170,7 @@ export default function System() {
             ]}
           />
         </Panel>
-        <Panel title="Outages" subtitle="The router didn't answer Insight, or answered without mobile data" flush>
+        <Panel title="Outages" subtitle="The router didn't answer Insight, had no mobile data, or no traffic got through" flush>
           <DataTable
             rows={sys.data?.outages ?? []}
             rowKey={(o) => `${o.kind}-${o.start_ts}`}
@@ -127,7 +181,7 @@ export default function System() {
                 key: 'kind',
                 label: 'What was down',
                 render: (o) => (
-                  <span className={o.kind === 'wan' ? 'tone-warning' : 'tone-critical'} title={OUTAGE_KINDS[o.kind]?.detail}>
+                  <span className={`tone-${outageTone(o.kind)}`} title={OUTAGE_KINDS[o.kind]?.detail}>
                     {OUTAGE_KINDS[o.kind]?.label ?? o.kind}
                   </span>
                 ),

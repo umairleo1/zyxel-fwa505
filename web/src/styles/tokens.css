@@ -39,6 +39,9 @@
   --critical-text: #b42323;
   --good-wash: rgba(12, 163, 12, 0.1);
   --warning-wash: rgba(250, 178, 25, 0.16);
+  /* Internet stalled: the router said it was connected but nothing got through. */
+  --stall: #eb6834;
+  --stall-wash: rgba(235, 104, 52, 0.13);
   --critical-wash: rgba(208, 59, 59, 0.09);
   --info-wash: rgba(42, 120, 214, 0.08);
 
@@ -81,6 +84,8 @@
     --critical-text: #f07171;
     --good-wash: rgba(12, 163, 12, 0.14);
     --warning-wash: rgba(250, 178, 25, 0.12);
+    --stall: #d95926;
+    --stall-wash: rgba(217, 89, 38, 0.18);
     --critical-wash: rgba(208, 59, 59, 0.16);
     --info-wash: rgba(57, 135, 229, 0.12);
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
@@ -115,6 +120,8 @@
   --critical-text: #f07171;
   --good-wash: rgba(12, 163, 12, 0.14);
   --warning-wash: rgba(250, 178, 25, 0.12);
+  --stall: #d95926;
+  --stall-wash: rgba(217, 89, 38, 0.18);
   --critical-wash: rgba(208, 59, 59, 0.16);
   --info-wash: rgba(57, 135, 229, 0.12);
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);

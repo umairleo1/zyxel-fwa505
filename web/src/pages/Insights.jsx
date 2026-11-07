@@ -5,7 +5,7 @@ import { useLive, useToast } from '../app/live.js';
 import { navigate } from '../app/route.jsx';
 import { isNr } from '@zyxel-insight/shared/radio';
 import { formatBytes, formatBps, formatDayMonth, formatDuration, formatFull, formatSigned } from '../lib/format.js';
-import { OUTAGE_KINDS } from '../lib/timeline.js';
+import { OUTAGE_KINDS, outageTone } from '../lib/timeline.js';
 import { PageHeader, Panel, Stat, ErrorNote, PageLoader } from '../components/ui/index.js';
 import Segmented from '../components/ui/Segmented.jsx';
 import { StatusIcon } from '../components/ui/Icons.jsx';
@@ -18,6 +18,15 @@ const RANGES = [
 ];
 const TONE = { fail: 'critical', warn: 'warning', info: 'neutral', pass: 'good' };
 const STATUS_LABEL = { fail: 'Risk', warn: 'Review', info: 'Note', pass: 'OK' };
+/** " (2 mobile data, 3 stalls)": the outages that weren't the router itself. */
+const outageBreakdown = (rel) => {
+  const parts = [
+    rel.wanOutages && `${rel.wanOutages} mobile data`,
+    rel.internetStalls && `${rel.internetStalls} stall${rel.internetStalls === 1 ? '' : 's'}`,
+  ];
+  const shown = parts.filter(Boolean);
+  return shown.length ? ` (${shown.join(', ')})` : '';
+};
 
 /** Audit/recommendation status -> shared status icon. */
 const AuditIcon = ({ status }) => <StatusIcon tone={TONE[status]} size={15} />;
@@ -125,7 +134,7 @@ export default function Insights() {
           unit="%"
           sub={
             rel
-              ? `${rel.outages} outage${rel.outages === 1 ? '' : 's'}${rel.wanOutages ? ` (${rel.wanOutages} mobile data)` : ''} · ${formatDuration(rel.downtimeSec)} down · watched ${rel.coveragePct ?? 0}%${rel.startedInPeriod ? ` since ${formatDayMonth(rel.monitoredSince)}` : ''}`
+              ? `${rel.outages} outage${rel.outages === 1 ? '' : 's'}${outageBreakdown(rel)} · ${formatDuration(rel.downtimeSec)} down · watched ${rel.coveragePct ?? 0}%${rel.startedInPeriod ? ` since ${formatDayMonth(rel.monitoredSince)}` : ''}`
               : ''
           }
         />
@@ -257,7 +266,7 @@ export default function Insights() {
                 ))}
                 {rel.recentOutages.map((o) => (
                   <li key={`o${o.kind}${o.start_ts}`}>
-                    <span className={`dot ${o.kind === 'wan' ? 'dot-warning' : 'dot-critical'}`} />
+                    <span className={`dot dot-${outageTone(o.kind)}`} />
                     <b>
                       {OUTAGE_KINDS[o.kind]?.label ?? 'Outage'} {formatDuration((o.end_ts - o.start_ts) / 1000)}
                       {o.ongoing && ' so far'}

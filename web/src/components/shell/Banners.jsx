@@ -55,6 +55,20 @@ export default function Banners({ status, busy, onAction, route }) {
     );
   }
 
+  // Only when the router itself looks fine: otherwise one of the banners above explains it.
+  const stall = status.internet?.stall;
+  if (c.phase === 'ok' && !wan?.since && stall) {
+    banners.push(
+      <div key="internet" className="banner banner-warning" role="status">
+        <Alert />
+        <div>
+          <strong>Internet stalled.</strong> The router says mobile data is connected, but nothing has got through since{' '}
+          <When ts={stall.since} seconds />.{stall.reason && <span className="banner-detail">{stall.reason}</span>}
+        </div>
+      </div>,
+    );
+  }
+
   // A band selection on trial, shown on every page (the Radio page has its own): it reverts by itself unless kept.
   if (status.radioTrial && route !== 'radio') {
     banners.push(

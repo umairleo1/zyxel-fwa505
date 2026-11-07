@@ -28,6 +28,9 @@ export const SERIES = {
   cpu: { key: 'cpu', label: 'CPU', color: 'var(--series-1)' },
   memory: { key: 'mem', label: 'Memory', color: 'var(--series-3)' },
   rssi: { key: 'rssi', label: 'RSSI', color: 'var(--series-1)' },
+  rttAvg: { key: 'rttAvg', label: 'Average', color: 'var(--series-1)' },
+  rttMax: { key: 'rttMax', label: 'Peak', color: 'var(--series-2)' },
+  failedPct: { key: 'failedPct', label: 'Failed checks', color: 'var(--stall)' },
 };
 
 /** Time-range presets. `key` is used in the URL, `ms` by pages with their own picker. */

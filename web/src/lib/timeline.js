@@ -8,16 +8,32 @@ export const MARKER_KINDS = {
 };
 const RANK = Object.keys(MARKER_KINDS);
 
-/** Outage kinds from /api/timeline: what was down. Both mean no internet. */
+/** Outage kinds from /api/timeline: what was down. All mean no internet; `tone` colours them. */
 export const OUTAGE_KINDS = {
-  router: { label: 'Router unreachable', one: 'router outage', many: 'router outages', detail: "The router didn't answer Insight" },
+  router: {
+    label: 'Router unreachable',
+    one: 'router outage',
+    many: 'router outages',
+    detail: "The router didn't answer Insight",
+    tone: 'critical',
+  },
   wan: {
     label: 'No mobile data',
     one: 'mobile data drop',
     many: 'mobile data drops',
     detail: 'The router answered, but its mobile data connection was down',
+    tone: 'warning',
+  },
+  internet: {
+    label: 'Internet stalled',
+    one: 'internet stall',
+    many: 'internet stalls',
+    detail: 'The router reported mobile data as up, but nothing got through to the internet',
+    tone: 'warning',
   },
 };
+/** 'critical' | 'warning' for an outage kind; unknown kinds count as the most severe. */
+export const outageTone = (kind) => OUTAGE_KINDS[kind]?.tone ?? 'critical';
 export const UNMONITORED = {
   label: 'Not monitored',
   detail: "Insight wasn't collecting (not running, computer asleep, or paused), so it can't say what happened",

@@ -2,7 +2,16 @@ import { useRef, useState } from 'react';
 import { useElementWidth } from '../../hooks/index.js';
 import { formatBps, formatBucket, formatDuration, formatFull, formatSpan, niceTicks, timeTicks } from '../../lib/format.js';
 import { SERIES as SERIES_BY_ID } from '../../lib/domain.js';
-import { MARKER_KINDS, OUTAGE_KINDS, UNMONITORED, clusterMarkers, focusWindow, spanAt, timelineSummary } from '../../lib/timeline.js';
+import {
+  MARKER_KINDS,
+  OUTAGE_KINDS,
+  UNMONITORED,
+  clusterMarkers,
+  focusWindow,
+  outageTone,
+  spanAt,
+  timelineSummary,
+} from '../../lib/timeline.js';
 import Tooltip from '../../components/charts/Tooltip.jsx';
 import CoverageBands from '../../components/charts/CoverageBands.jsx';
 import { clampTooltip, linePath, seriesSummary } from '../../components/charts/svg.js';
@@ -16,10 +25,10 @@ const LANE = 26; // marker row between the plot and the time axis
 const BRUSH_MIN_PX = 6; // a shorter drag is a click, not a zoom
 const MARKER_GAP_PX = 14;
 const TIP_ITEMS = 4;
-const OUTAGE_COLOR = { router: 'var(--critical)', wan: 'var(--warning)' };
+const OUTAGE_COLOR = { router: 'var(--critical)', wan: 'var(--warning)', internet: 'var(--stall)' };
 
 /**
- * WAN throughput with outages shaded (router unreachable, or mobile data down) and
+ * WAN throughput with outages shaded (router unreachable, mobile data down, or internet stalled) and
  * reboots / cell / band changes marked underneath, so a slowdown lines up with its
  * cause. Stretches Insight wasn't watching are hatched, so they don't read as calm.
  * Drag to zoom; a marker zooms to its moment (and with it the log table below).
@@ -355,7 +364,7 @@ function Summary({ summary, truncated }) {
         <>
           {Object.entries(OUTAGE_KINDS).map(([kind, k]) =>
             byKind[kind] ? (
-              <li key={kind} className={kind === 'wan' ? 'tone-warning' : 'tone-critical'}>
+              <li key={kind} className={`tone-${outageTone(kind)}`}>
                 <b>{byKind[kind]}</b> {plural(byKind[kind], k)}
               </li>
             ) : null,

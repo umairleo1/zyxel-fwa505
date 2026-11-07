@@ -43,6 +43,7 @@ test('spanAt and timelineSummary', () => {
     { start: 1_000, end: 61_000, kind: 'router', reason: null },
     { start: 100_000, end: 130_000, kind: 'wan', reason: 'No WAN IP address' },
     { start: 120_000, end: 140_000, kind: 'router', reason: null, ongoing: true }, // overlaps the one before
+    { start: 300_000, end: 310_000, kind: 'internet', reason: 'No reply from 1.1.1.1 or 8.8.8.8' },
   ];
   assert.equal(spanAt(outages, 500), null);
   assert.equal(spanAt(outages, 110_000), outages[1]);
@@ -52,16 +53,16 @@ test('spanAt and timelineSummary', () => {
     markers: [{ kind: 'cell' }, { kind: 'cell' }, { kind: 'reboot' }, { kind: 'unknown' }],
   });
   assert.deepEqual(s, {
-    outages: 3,
-    byKind: { router: 2, wan: 1 },
-    downSec: 100, // 60 + 40, the 10 s overlap counted once
+    outages: 4,
+    byKind: { router: 2, wan: 1, internet: 1 },
+    downSec: 110, // 60 + 40 + 10, the 10 s overlap counted once
     ongoing: true,
     unmonitoredSec: 60,
     counts: { reboot: 1, cell: 2, combo: 0 },
   });
   assert.deepEqual(timelineSummary(), {
     outages: 0,
-    byKind: { router: 0, wan: 0 },
+    byKind: { router: 0, wan: 0, internet: 0 },
     downSec: 0,
     ongoing: false,
     unmonitoredSec: 0,
