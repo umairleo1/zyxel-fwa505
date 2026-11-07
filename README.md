@@ -2,7 +2,7 @@
 
 A local monitoring and diagnostics dashboard for the **Zyxel FWA505** 5G router. It collects what the router's own admin page only shows in the moment: signal and carrier history, connected devices, traffic, reboots and logs. It then turns that history into insights, such as configuration risks, reliability and actionable signal advice.
 
-Insight runs on your own computer, talks only to your router, and is **read-only**, with three deliberate exceptions: the Messages tab can send, mark read and delete SMS on the router's SIM, Radio control can change the preferred network mode and bands, always as a trial that reverts unless kept, and the System page can restart the router (`SMS_ENABLED=false`, `RADIO_CONTROL_ENABLED=false` and `REBOOT_ENABLED=false` turn them off).
+Insight runs on your own computer and talks only to your router. Monitoring and the settings mirrors are read-only. Dedicated controls handle SMS, band trials, restart, and the firmware, backup, diagnostics, WAN and account operations on **High control**. Set `SMS_ENABLED=false`, `RADIO_CONTROL_ENABLED=false`, `REBOOT_ENABLED=false` and `HIGH_CONTROL_ENABLED=false` for fully read-only operation.
 
 ![Dashboard](docs/screenshots/dashboard.png)
 
@@ -31,11 +31,12 @@ Insight runs on your own computer, talks only to your router, and is **read-only
 - **Log archive:** the router keeps only its last ~100 log lines in memory and loses them on reboot. Insight copies them continuously, deduplicates them and stores them in SQLite. Remote syslog can be added for complete history.
 - **Signal history:** LTE and 5G RSRP, SINR and RSRQ every 5 seconds, plus per-carrier readings for every aggregated band.
 - **Carriers and change events:** the active band combination (for example `B7+B3 + n78+n1`) and total aggregated bandwidth, with an event logged whenever a carrier or serving cell changes.
-- **Reboots and outages:** reboots are detected from uptime, even ones that happen while Insight is stopped, and stamped with the real boot time. Outages are recorded in two kinds: the router stopped answering Insight, or it answered but its mobile data connection was down (no SIM, cellular interface down, or no WAN address).
+- **Reboots and outages:** reboots are detected from uptime, even ones that happen while Insight is stopped, and stamped with the real boot time. Outages are recorded in three kinds: the router stopped answering Insight; it answered but its mobile data connection was down (no SIM, cellular interface down, or no WAN address); or it reported mobile data as up while nothing got through (an **internet stall**, found by Insight's own internet check).
 - **Devices:** first and last seen, connect and disconnect history, a new-device alert, and per-device Wi-Fi signal over time.
 - **Traffic:** live throughput and daily data usage, computed from the router's interface counters.
 - **Radio control:** choose the network mode (automatic, 5G SA, 5G NSA, 4G only) and which bands the modem may use, with each band's measured strength, quality and time in use beside it, and suggestions from that history (for example "strongest 4G + all 5G"). Every change is a 5-minute trial that switches back unless you keep it. Also shows the live carrier aggregation and the serving mast's eNodeB ID and sector, to look up on a coverage map.
 - **Messages:** the SIM's texts as conversations, with replies, new messages, mark-as-read and delete, an unread badge in the sidebar, and a live character and SMS-part counter that uses the router's own encoding (GSM or Unicode, long messages split into parts).
+- **High control:** beneath Radio control, a dedicated page for firmware checks and automatic-update settings, online installation, configuration backup/restore, ROM-D defaults, partial reset, speed test/iperf, WAN editing, account privileges and Z-console redirection. Controls follow the router's actual role and capability flags; the page does not promote an account to `high`.
 
 **Insights the router does not provide**
 
@@ -96,6 +97,14 @@ To try Insight **without a router**, run the full stack against the bundled mock
 npm run dev:mock     # UI with hot reload at http://localhost:5173
 ```
 
+The mock's `admin` login has medium privileges. To exercise every High control section with a simulated high account and console support:
+
+```sh
+ROUTER_USER=supervisor MOCK_ZCONSOLE_ENABLED=true npm run dev:mock
+```
+
+These are mock-only credentials (`mock`), not a way to elevate a real router account. Mock firmware installs and restores simulate a restart. The page keeps an unverified restore outcome visible until you acknowledge it; a readable router alone does not prove that every restored setting is correct.
+
 **Using the router's admin page while Insight runs:** press **Pause** in the top bar. Insight logs out and releases its router session. Press **Resume** afterwards.
 
 ## Optional: real-time events from the router
@@ -115,15 +124,17 @@ Notes:
 
 ## Safety and privacy
 
-- **Read-only by construction, with three exceptions:**
-  - **No writes:** the router client refuses every non-GET request except login, logout, SMS, the band selection and a restart, and never calls `DEL_LOG`.
+- **Explicit router controls:**
+  - **Narrow allowlists:** the router client refuses requests outside the dedicated login/logout, SMS, band selection, restart and High control operations, and never calls `DEL_LOG`.
   - **The SMS exception:** `POST`/`PUT`/`DELETE` are allowed to exactly one endpoint, `/cgi-bin/DAL?oid=cellwan_sms`, with a fixed set of parameters, and only while `SMS_ENABLED` is on (the default). That's how the Messages tab sends, marks read and deletes texts. It can't be pointed at any other setting. Sends are never retried (a retry could text twice), are limited to 5 a minute and 30 an hour, and each send or delete is logged with the number partly masked and without the text.
   - **The band-selection exception:** `PUT` is allowed to exactly one endpoint, `/cgi-bin/DAL?oid=cellwan_band`, with nothing else on the URL, and only while `RADIO_CONTROL_ENABLED` is on (the default). The body is the router's own object with only the network mode and band list changed, checked first against the same rules as the router's admin page (for example, 5G NSA keeps at least one 4G and one 5G band). Each change is a trial: unless you press **Keep** within 5 minutes, Insight puts back the previous selection, also after a restart, and retries until the router accepts it. Changes are at least 15 s apart so the modem can re-register, and each one is logged.
   - **The restart exception:** `POST` is allowed to exactly one endpoint, `/cgi-bin/Reboot`, with only the session key on the URL and no body, as the router's own Maintenance → Reboot page sends it, and only while `REBOOT_ENABLED` is on (the default). The button asks twice, is never retried, and works at most once every 5 minutes (also across Insight restarts). The request is logged first, so the reboot that follows is recorded as expected and the outage as a requested restart, not a fault.
+  - **High control:** `HIGH_CONTROL_ENABLED=false` disables the dedicated control transport and HTTP routes. The server checks the authenticated router role and firmware flags, validates changes against fresh server-side configuration, and preserves unchanged secrets. ROM-D, account and privilege administration and iperf need high access (a medium login may only edit its own account, which Insight protects); Z-console additionally needs firmware support. Usernames and WAN names must be unique, so an edit can never land on another entry. Confirmations distinguish installing firmware, restoring configuration, changing persistent defaults and saving WAN settings. A disconnected action is not automatically resent. Firmware, restore and partial-reset operations are only settled after the router has been seen going down and coming back, watched with an unauthenticated probe so a half-started router never costs a login attempt; and diagnostics share one result channel with a deadline. A pending band trial blocks conflicting operations.
+  - **Recovery:** WAN edits do not have the radio page's guaranteed trial rollback. A change to VLANs, routing or bridge mode can remove the computer's route to the device. Keep a local recovery path. Router configuration exports are separate from Insight's SQLite backups, and ROM-D stores reset defaults rather than a full flash image. Backup files can contain credentials: keep them private.
   - **What it can't do:** cell (PCI) lock isn't offered: firmware V1.71 hides it and returns nothing for it. Carrier aggregation has no setting at all; the network decides it.
   - **Messages aren't stored:** they're read live from the SIM; Insight keeps no copy, and the router cache skips them. While the dashboard is open, the inbox is checked once a minute for the unread badge.
   - **Allowlist:** router data is read only from an explicit list of endpoints (`server/src/router/catalog.js`).
-  - **Excluded endpoints:** endpoints that do work even on a GET are left out, including network and PLMN scans, ping and iperf tests, azimuth calibration, backup and the online firmware check.
+  - **Excluded from ordinary polling:** endpoints that do work even on a GET are left out of the generic read catalog, including network and PLMN scans, diagnostics, calibration, backup and online firmware checks. High control invokes its allowlisted actions only on explicit requests.
 - **Secrets never reach the browser:** the router returns some credentials in plain text, such as the Wi-Fi passphrase, SNMP communities and service passwords. They are masked on the server. The configuration audit runs on the raw values server-side.
 - **Respects the router:**
   - **Lockout protection:** a rejected login halts collection instead of retrying, because the router locks the account after 3 failures.
@@ -135,6 +146,7 @@ Notes:
   - **Browser protections:** requests must use a known host name (localhost, this machine's IPs and hostname, `ALLOWED_HOSTS`), which blocks DNS-rebinding pages. Requests that change state (Pause/Resume, sending and deleting SMS, band changes) need an `X-Insight-Request` header and a same-origin `Origin`, so other sites cannot trigger them. Responses carry a strict Content-Security-Policy, `X-Frame-Options: DENY`, `nosniff` and `no-referrer`.
   - **Router load caps:** at most 30 endpoints per `/api/router` request, a forced refresh (`fresh=1`) at most once per 10 s per endpoint (30 s for Insights), and at most 20 live (SSE) connections.
   - **Syslog and SNMP listeners:** they bind to `0.0.0.0` so the router can reach them, but only accept packets from the router (the host in `ROUTER_URL`) and loopback, unless `INGEST_ALLOWED_SOURCES` says otherwise. Stored rows are capped at 600 syslog lines and 60 traps per minute; denied and dropped packets are counted in the status and warnings are logged at most once a minute.
+  - **Z-console receiver:** TCP port `5515` accepts console lines from the same source allowlist, with connection, line-size and row-rate limits. Keep-alive probes find connections that a reboot left dead, and a new connection from the router replaces the oldest. Configure a supported router's Z-console destination explicitly and enable its common TCP server mode. Received lines are stored under `router-console`; the receiver does not execute console commands. `ZCONSOLE_PORT=0` disables it.
   - **Ignored by git:** the database (`server/data/`, including `backups/`) and `.env` are excluded.
 - **Health and backups:** `GET /api/health` returns 200 while collecting (or paused) and 503 when login is halted or no router read succeeded for 3 × max(`STATUS_INTERVAL_SEC`, 60 s). It needs the password like everything else, except from the same machine (loopback), so systemd or a local monitor can probe it. A copy of the database is written every `BACKUP_EVERY_DAYS` (default 7) to `<DB dir>/backups/insight-YYYY-MM-DD.db` (newest `BACKUP_KEEP` kept); weekly by default because each backup copies the whole database, which matters on an SD card. On an unexpected error Insight logs out of the router and exits with code 1, so a supervisor such as systemd can restart it.
 
@@ -159,7 +171,9 @@ All settings are environment variables, read from `.env` in the project root. Se
 | `ALLOWED_HOSTS`                     | empty                    | Extra host names the UI may be opened by (DNS name, reverse proxy)                                     |
 | `SMS_ENABLED`                       | `true`                   | Messages tab: read, send and delete SMS on the router's SIM                                            |
 | `RADIO_CONTROL_ENABLED`             | `true`                   | Radio control: change the preferred network mode and bands, as trials                                  |
-| `REBOOT_ENABLED`                    | `true`                   | System page: Restart router. With the two above also `false`, Insight is fully read-only               |
+| `REBOOT_ENABLED`                    | `true`                   | System page: Restart router                                                                            |
+| `HIGH_CONTROL_ENABLED`              | `true`                   | High control maintenance and administration. Set all four control flags false for read-only operation  |
+| `ZCONSOLE_PORT` / `ZCONSOLE_HOST`   | `5515` / `0.0.0.0`       | Source-filtered TCP console receiver; port `0` disables it                                             |
 | `DB_PATH`                           | `server/data/insight.db` | SQLite database (relative to the project root)                                                         |
 | `RETAIN_LOGS_DAYS`                  | `180`                    | Log retention                                                                                          |
 | `RETAIN_SIGNAL_DAYS`                | `90`                     | 5-second signal sample retention                                                                       |
@@ -172,6 +186,7 @@ All settings are environment variables, read from `.env` in the project root. Se
 - **Values come straight from the router:** they were verified against raw reads, and carrier bands, PCI, RSRP, aggregated bandwidth, uptime (within about 1 s) and Wi-Fi client RSSI all match.
 - **"No measurement" is not a reading:** the modem reports placeholders such as `-128` when it has nothing to measure. Those, and anything outside the 3GPP measurement ranges, are dropped rather than stored, so they can't show up as impossible minimums.
 - **Mobile data vs. the router:** the router answering on the LAN says nothing about the internet behind it, so mobile data is judged separately from the SIM state, cellular interface and WAN address. A drop of either kind is an outage; only "router unreachable" also leaves a gap in the signal history.
+- **Internet check:** the router can stay "connected" through a stall on a weak cell, so Insight also opens a TCP connection to `1.1.1.1:443` every second (reset at once, no data: ~250 bytes, about 0.7 GB of mobile data a month). Only when that fails are `8.8.8.8` and the router tried; three failed rounds in a row with the router still answering is a stall, ended by two good rounds in a row. Each stall records the signal at the moment it began. Every minute's checks are summarised (average and peak connect time, share failed) and charted on the System page, kept for `RETAIN_INTERNET_DAYS` (90). Set with `INTERNET_PROBE_INTERVAL_SEC` (0 disables), `INTERNET_PROBE_TIMEOUT_MS` and `INTERNET_PROBE_TARGETS`. It runs from this computer, so while it sleeps nothing is checked.
 - **Signal ratings use the router's own 5-bar RSRP scale,** taken from its web UI, so Insight and the admin page agree. SINR, which the router does not rate, uses standard LTE/NR guidance.
 - **Reboot causes:**
   - **What Insight can know:** that the router restarted, and exactly when.
@@ -204,7 +219,7 @@ shared/                 Domain rules shared by server and UI (signal scales, sev
 server/src/
   index.js              Composition root: wiring, startup, graceful shutdown
   router/               Router client (read-only plus SMS, band selection and restart), endpoint allowlist, shared cache, secret masking
-  collector/            Polling and recovery, radio and carrier interpretation, mobile data state, reboots, samplers
+  collector/            Polling and recovery, radio and carrier interpretation, mobile data state, internet check, reboots, samplers
   ingest/               Syslog and SNMP trap listeners (shared UDP listener)
   logs/                 Router log and syslog parsing, sliding-window deduplication
   insights/             Configuration audit, statistics, recommendations, timeline and monitored coverage
