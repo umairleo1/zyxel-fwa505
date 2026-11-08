@@ -114,7 +114,16 @@ export function computeInsights({ db, from, to, state, traffic, hourlyTraffic, m
     hourly,
     devices: devicesSummary,
     usage,
-    recommendations: recommend({ state, signal, reliability, system, devicesSummary, bands: db.bandsSeen(), hourly }),
+    // Band advice compares bands on the network in use only (see storage/bands.js).
+    recommendations: recommend({
+      state,
+      signal,
+      reliability,
+      system,
+      devicesSummary,
+      bands: db.bandsSeen({ plmn: state?.router?.signal?.plmn ?? undefined }),
+      hourly,
+    }),
   };
 }
 

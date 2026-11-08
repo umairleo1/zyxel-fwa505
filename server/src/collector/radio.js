@@ -2,17 +2,30 @@ import { findKey, scalars } from '../lib/util.js';
 import { summarizeCarriers } from './carriers.js';
 import { reading } from '../lib/readings.js';
 
+/**
+ * The serving network from the router's "network in use" text, e.g. "Current_EE_NR5G-NSA_23430"
+ * → { operator: 'EE', plmn: '23430' }. The PLMN (MCC + MNC) identifies the network; the name is
+ * for display. Pure; nulls when the text doesn't match.
+ */
+export function parseNetworkInUse(text) {
+  const s = typeof text === 'string' ? text.trim() : '';
+  if (!s) return { operator: null, plmn: null };
+  return {
+    operator: /^Current_(.+?)_[A-Z0-9-]+_\d+$/.exec(s)?.[1] ?? s,
+    plmn: /_(\d{5,6})$/.exec(s)?.[1] ?? null,
+  };
+}
+
 /** Headline radio metrics from the router's CellIntfInfo / CellIntfZyNrNsaInfo objects. */
 export function summarizeSignal(cell, nr) {
   if (!cell) return null;
-  // NetworkInUse looks like "Current_EE_NR5G-NSA_23430"
-  const operator = /^Current_(.+?)_[A-Z0-9-]+_\d+$/.exec(cell.NetworkInUse ?? '')?.[1] ?? cell.NetworkInUse ?? null;
+  const { operator, plmn } = parseNetworkInUse(cell.NetworkInUse);
   const nrActive = nr && nr.Enable !== false && reading('rsrp', nr.RSRP) !== null && Number(nr.RSRP) !== 0;
   return {
     status: cell.Status ?? null,
     tech: cell.CurrentAccessTechnology ?? null,
     operator,
-    plmn: /_(\d{5,6})$/.exec(cell.NetworkInUse ?? '')?.[1] ?? null,
+    plmn,
     lte: {
       band: cell.X_ZYXEL_CurrentBand ?? null,
       cellId: cell.X_ZYXEL_CellID ?? null,
@@ -65,6 +78,9 @@ export function interpretRadio(statusData, cellwan) {
         }
       : null;
     if (cellwan?.INTF_Current_Access_Technology) signal.tech = cellwan.INTF_Current_Access_Technology;
+    // The live object names the network too: a SIM swap shows on the next read, not a minute later.
+    const live = parseNetworkInUse(cellwan?.INTF_Network_In_Use);
+    if (live.plmn) Object.assign(signal, live);
   }
 
   // Serving cell identity (LTE anchor); a change is a handover.

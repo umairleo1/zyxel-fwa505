@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { summarizeSignal } from '../../src/collector/radio.js';
+import { interpretRadio, parseNetworkInUse, summarizeSignal } from '../../src/collector/radio.js';
 
 // Field names as returned by a real FWA505 (V1.71(ACKO.0)C0).
 const cell = {
@@ -32,4 +32,18 @@ test('treats an idle 5G leg as absent', () => {
   assert.equal(summarizeSignal(cell, { ...nr, RSRP: 0 }).nr, null);
   assert.equal(summarizeSignal(cell, null).nr, null);
   assert.equal(summarizeSignal(null, nr), null);
+});
+
+test('the network is parsed from the router text, and the live object wins over the minute-old status', () => {
+  assert.deepEqual(parseNetworkInUse('Current_EE_NR5G-NSA_23430'), { operator: 'EE', plmn: '23430' });
+  assert.deepEqual(parseNetworkInUse('Current_Vodafone UK_LTE_23415'), { operator: 'Vodafone UK', plmn: '23415' });
+  assert.deepEqual(parseNetworkInUse(''), { operator: null, plmn: null });
+  assert.deepEqual(parseNetworkInUse(undefined), { operator: null, plmn: null });
+
+  const status = { Object: [{ CellIntfInfo: { NetworkInUse: 'Current_EE_NR5G-NSA_23430', X_ZYXEL_RSRP: -90 } }] };
+  assert.equal(interpretRadio(status, null).signal.plmn, '23430');
+  // A SIM swapped since the last full status read: the live object already says so.
+  const live = interpretRadio(status, { INTF_Network_In_Use: 'Current_Vodafone UK_LTE_23415' });
+  assert.equal(live.signal.plmn, '23415');
+  assert.equal(live.signal.operator, 'Vodafone UK');
 });
