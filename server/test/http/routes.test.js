@@ -76,3 +76,23 @@ test('/api/health returns 503 when halted', async (t) => {
   assert.equal(res.status, 503);
   assert.equal(JSON.parse(res.body).status, 'halted');
 });
+
+test('/api/bands reports the network in use by default, any network on request, and rejects junk', async (t) => {
+  const asked = [];
+  const db = {
+    bandsSeen: ({ plmn } = {}) => (asked.push(plmn), [{ band: plmn === '23415' ? 'B20' : 'B3' }]),
+    bandNetwork: (plmn) => ({ plmn: plmn ?? '23430', operator: null }),
+    bandNetworks: () => [{ plmn: '23430' }, { plmn: '23415' }],
+  };
+  const collector = { state: { phase: 'ok', router: { signal: { plmn: '23430' } } } };
+  const s = await serve(fakeDeps({ db, collector }));
+  t.after(() => s.close());
+  const live = JSON.parse((await s.request('/api/bands')).body);
+  assert.equal(live.network.plmn, '23430');
+  assert.equal(live.networks.length, 2);
+  assert.equal(asked.at(-1), '23430', 'the live network, not a guess');
+  const other = JSON.parse((await s.request('/api/bands?network=23415')).body);
+  assert.equal(other.bands[0].band, 'B20');
+  assert.equal((await s.request('/api/bands?network=')).status, 200, "'' is the history from before networks were told apart");
+  assert.equal((await s.request('/api/bands?network=EE')).status, 400);
+});

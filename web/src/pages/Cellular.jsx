@@ -151,7 +151,13 @@ export default function Cellular() {
         </div>
       </div>
 
-      <BandsSeen bands={seen.data?.bands} active={active} loading={seen.loading} />
+      <BandsSeen
+        bands={seen.data?.bands}
+        active={active}
+        loading={seen.loading}
+        network={seen.data?.network}
+        networks={seen.data?.networks}
+      />
 
       <Panel title="Cell & carrier changes" subtitle="Handovers and band-combination changes detected by Insight">
         {events.data?.items?.length ? (

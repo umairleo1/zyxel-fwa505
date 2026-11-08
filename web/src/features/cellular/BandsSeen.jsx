@@ -1,4 +1,4 @@
-import { BAND_FREQ, rsrpQuality, sinrQuality } from '../../lib/domain.js';
+import { BAND_FREQ, networkLabel, rsrpQuality, sinrQuality } from '../../lib/domain.js';
 import { formatDayMonth, formatDuration, formatFull, formatHM } from '../../lib/format.js';
 import { DataTable, Panel, Reading } from '../../components/ui/index.js';
 
@@ -17,7 +17,7 @@ const cellList = (cells) => cells.map((c) => (c.channel != null ? `${c.pci} (ch 
  * Every band the router has connected on, so far. The router only reports the
  * carriers in use right now; anything listed here is broadcast near you.
  */
-export default function BandsSeen({ bands, active, loading }) {
+export default function BandsSeen({ bands, active, loading, network, networks = [] }) {
   const now = Date.now();
   const inUse = (b) => active.has(b.band.toUpperCase());
   // In-use bands first; the rest by when they were last used (fixed once a band is left).
@@ -27,7 +27,11 @@ export default function BandsSeen({ bands, active, loading }) {
   return (
     <Panel
       title="Bands seen here"
-      subtitle={`Every band the router has used since Insight started recording · ${rows.length} band${rows.length === 1 ? '' : 's'}`}
+      subtitle={`Every band the router has used on ${networkLabel(network)} since Insight started recording · ${rows.length} band${rows.length === 1 ? '' : 's'}${
+        networks.length > 1
+          ? `. History is kept per network: ${networks.length - 1} other network${networks.length === 2 ? '' : 's'} not shown.`
+          : ''
+      }`}
       flush
     >
       <DataTable

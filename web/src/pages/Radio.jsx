@@ -3,7 +3,7 @@ import { api } from '../api/client.js';
 import { useAsync, useNow, useRouterData } from '../hooks/index.js';
 import { useLive, useToast } from '../app/live.js';
 import { formatDuration, formatSigned } from '../lib/format.js';
-import { BAND_FREQ, rsrpQuality } from '../lib/domain.js';
+import { BAND_FREQ, networkLabel, rsrpQuality } from '../lib/domain.js';
 import { AUTO, TECHNOLOGIES, bandsForTechnology, describeBands, isLte, isNr, selectionError } from '@zyxel-insight/shared/radio';
 import { ErrorNote, KV, PageHeader, PageLoader, Panel, Stat } from '../components/ui/index.js';
 import { QualityBadge } from '../components/ui/Quality.jsx';
@@ -167,7 +167,7 @@ export default function Radio() {
       >
         {presets.length > 0 && (
           <div className="radio-presets">
-            <span className="muted small">Suggestions from your history</span>
+            <span className="muted small">Suggestions from your history on {networkLabel(seen.data?.network)}</span>
             {presets.map((p) => (
               <button
                 key={p.label}

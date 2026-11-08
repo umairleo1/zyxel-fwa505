@@ -59,7 +59,15 @@ export function telemetryRoutes({ db, collector, internet }) {
     });
   });
 
-  r.get('/bands', (_req, res) => res.json({ bands: db.bandsSeen() }));
+  // One network's band history (?network=<MCC+MNC>, '' for history from before networks were told
+  // apart); default the network in use. `networks` lists every network with history.
+  r.get('/bands', (req, res) => {
+    const asked = req.query.network;
+    if (asked !== undefined && !/^(\d{5,6})?$/.test(String(asked)))
+      return res.status(400).json({ error: 'network must be an MCC+MNC code' });
+    const plmn = asked ?? collector?.state.router?.signal?.plmn ?? undefined;
+    res.json({ network: db.bandNetwork(plmn), networks: db.bandNetworks(), bands: db.bandsSeen({ plmn }) });
+  });
 
   r.get('/devices', (_req, res) => {
     const stations = new Map(db.latestStations(Date.now() - RECENT_STATIONS_MS).map((s) => [s.mac, s]));
