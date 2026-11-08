@@ -10,10 +10,12 @@ import { smsRoutes } from './routes/sms.js';
 import { radioRoutes } from './routes/radio.js';
 import { rebootRoutes } from './routes/reboot.js';
 import { controlRoutes } from './routes/control.js';
+import { speedRoutes } from './routes/speed.js';
 import { basicAuth, csrfGuard, hostGuard, isLoopback, liveAllowedHostnames, securityHeaders } from './security.js';
 
 /**
  * Build the Express app. deps: { db, hub, collector, internet?, routerData, statusPayload, staticDir?,
+ * speed?, optimiser?, placement?,
  * statusIntervalSec?, security?: { password?, allowedHosts?: Set<string> | () => Set<string> } }
  */
 export function createApp(deps) {
@@ -43,6 +45,11 @@ export function createApp(deps) {
     if (conflicting && (held || (deps.control?.busy && req.method !== 'GET'))) {
       return res.status(409).json({ error: 'A High control operation is running; wait for it to finish' });
     }
+    // The optimiser switches bands on its own: nothing else may change the router meanwhile.
+    const owned = /^\/(radio|collector|control)(\/|$)|^\/router\/reboot$/.test(req.path);
+    if (owned && deps.optimiser?.running && req.method !== 'GET') {
+      return res.status(409).json({ error: 'The optimiser is running; wait for it to finish or cancel it on the Speed page' });
+    }
     next();
   });
   api.use(controlRoutes(deps));
@@ -54,6 +61,7 @@ export function createApp(deps) {
   api.use(smsRoutes(deps));
   api.use(radioRoutes(deps));
   api.use(rebootRoutes(deps));
+  api.use(speedRoutes(deps));
   api.use((_req, res) => res.status(404).json({ error: 'Not found' }));
   app.use('/api', api);
 

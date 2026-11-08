@@ -21,6 +21,9 @@ import { createSmsService } from './sms/service.js';
 import { createRadioService } from './radio/service.js';
 import { createRebootService } from './router/reboot.js';
 import { createControlService } from './control/service.js';
+import { createSpeedService } from './speed/service.js';
+import { createOptimiser } from './speed/optimiser.js';
+import { createPlacement } from './speed/placement.js';
 import { findKey } from './lib/util.js';
 
 if (!config.routerPassword) {
@@ -109,7 +112,48 @@ const internet =
         onChange: () => pushStatus(),
       })
     : null;
-const statusPayload = createStatus({ config, collector, syslog, snmp, client, sms, radio, reboot, control, zconsole, internet });
+const [latencyTarget] = parseTargets([config.speedtest.latencyTarget || config.internetProbeTargets[0] || '1.1.1.1:443']);
+// optimiser is created below; isBlocked only runs once a test is requested.
+const speed = config.speedtestEnabled
+  ? createSpeedService({
+      db,
+      collector,
+      internet,
+      radio,
+      options: {
+        downUrl: config.speedtest.downUrl,
+        upUrl: config.speedtest.upUrl,
+        latencyTarget,
+        downMs: config.speedtest.downSec * 1000,
+        upMs: config.speedtest.upSec * 1000,
+        streams: config.speedtest.streams,
+        maxBytes: config.speedtest.maxMb * 1e6,
+        everyHours: config.speedtest.everyHours,
+        busyMbps: config.speedtest.busyMbps,
+      },
+      isBlocked: () => (optimiser?.running ? 'the optimiser is running' : null),
+      onChange: () => pushStatus(),
+    })
+  : null;
+// Band experiments need both band control and speed tests.
+const optimiser =
+  speed && config.radioControlEnabled ? createOptimiser({ radio, speed, collector, db, onChange: () => pushStatus() }) : null;
+const placement = createPlacement({ db, collector });
+const statusPayload = createStatus({
+  config,
+  collector,
+  syslog,
+  snmp,
+  client,
+  sms,
+  radio,
+  reboot,
+  control,
+  zconsole,
+  internet,
+  speed,
+  optimiser,
+});
 
 // Status changes on every poll and every syslog/trap packet: push at most once per second.
 const pushStatus = hub.throttled('status', statusPayload, 1000);
@@ -119,6 +163,7 @@ collector.start();
 internet?.start();
 sms.start();
 radio.start();
+speed?.start();
 
 // Retention: trim old rows shortly after start, then hourly.
 function prune() {
@@ -198,6 +243,9 @@ const app = createApp({
   radio: config.radioControlEnabled ? radio : null,
   reboot: config.rebootEnabled ? reboot : null,
   control: config.controlEnabled ? control : null,
+  speed,
+  optimiser,
+  placement,
   statusPayload,
   statusIntervalSec: config.statusIntervalSec,
   security: {
@@ -238,6 +286,8 @@ async function shutdown(code = 0) {
     zconsole?.close();
     samplers.stop();
     internet?.stop();
+    optimiser?.stop();
+    speed?.stop();
     sms.stop();
     radio.stop();
     await control.stop();

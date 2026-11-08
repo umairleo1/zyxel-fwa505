@@ -20,7 +20,21 @@ export function lanIp(routerUrl) {
 }
 
 /** Snapshot of everything the UI's health indicators need. */
-export function createStatus({ config, collector, syslog, snmp, client, sms, radio, reboot, control, zconsole, internet = null }) {
+export function createStatus({
+  config,
+  collector,
+  syslog,
+  snmp,
+  client,
+  sms,
+  radio,
+  reboot,
+  control,
+  zconsole,
+  internet = null,
+  speed = null,
+  optimiser = null,
+}) {
   return () => ({
     routerUrl: config.routerUrl,
     lanIp: lanIp(config.routerUrl),
@@ -41,6 +55,10 @@ export function createStatus({ config, collector, syslog, snmp, client, sms, rad
     collector: publicCollectorState(collector.state),
     // Internet check (null when disabled): phase, last round-trip, and the stall in progress if any.
     internet: internet?.state ?? null,
+    // Speed test in progress and the schedule (null when SPEEDTEST_ENABLED=false).
+    speed: speed?.state ?? null,
+    // Optimiser run in progress and the last one (null without band control or speed tests).
+    optimiser: optimiser?.state ?? null,
     syslog: syslog.state,
     snmp: snmp.state,
     routerLoad: client.loadSnapshot(),

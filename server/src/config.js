@@ -48,6 +48,23 @@ export const config = {
   // REBOOT_ENABLED=false removes the button and the router path.
   rebootEnabled: !/^(0|false|no|off)$/i.test(env.REBOOT_ENABLED ?? ''),
   controlEnabled: !/^(0|false|no|off)$/i.test(env.HIGH_CONTROL_ENABLED ?? ''),
+  // Speed tests run from this machine through the router (see speed/measure.js), so they work
+  // with any router account and during band trials. They use mobile data only when run: by
+  // hand, by the optimiser, or every SPEEDTEST_EVERY_HOURS (0 = no schedule).
+  speedtestEnabled: !/^(0|false|no|off)$/i.test(env.SPEEDTEST_ENABLED ?? ''),
+  speedtest: {
+    downUrl: env.SPEEDTEST_DOWN_URL || 'https://speed.cloudflare.com/__down?bytes={bytes}',
+    upUrl: env.SPEEDTEST_UP_URL || 'https://speed.cloudflare.com/__up',
+    // Latency is a TCP handshake time, like the internet check; empty = its first target.
+    latencyTarget: env.SPEEDTEST_LATENCY_TARGET || '',
+    downSec: num(env.SPEEDTEST_DOWNLOAD_SEC, 8),
+    upSec: num(env.SPEEDTEST_UPLOAD_SEC, 6),
+    streams: num(env.SPEEDTEST_STREAMS, 4),
+    maxMb: num(env.SPEEDTEST_MAX_MB, 300), // per test: the transfer stops early at this much data
+    everyHours: num(env.SPEEDTEST_EVERY_HOURS, 0),
+    // A scheduled test waits while other traffic is above this, so it measures the line, not a share of it.
+    busyMbps: num(env.SPEEDTEST_BUSY_MBPS, 5),
+  },
   // Extra names the dashboard may be reached by (reverse proxy, DNS name), on top of
   // localhost, this machine's addresses and hostname.
   allowedHosts: csv(env.ALLOWED_HOSTS),
@@ -61,6 +78,7 @@ export const config = {
     systemDays: 365,
     trafficDays: 400,
     internetDays: num(env.RETAIN_INTERNET_DAYS, 90), // one row a minute
+    speedDays: num(env.RETAIN_SPEED_DAYS, 400), // a few rows a day at most
   },
   dbPath: path.resolve(ROOT, env.DB_PATH || 'server/data/insight.db'),
 };

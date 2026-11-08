@@ -19,8 +19,11 @@ export async function serve(deps) {
   const server = createApp(deps).listen(0, '127.0.0.1');
   await new Promise((r) => server.once('listening', r));
   const { port } = server.address();
-  const request = (path, { method = 'GET', headers = {} } = {}) =>
+  // body: sent as JSON (with the content type) when given.
+  const request = (path, { method = 'GET', headers = {}, body } = {}) =>
     new Promise((resolve, reject) => {
+      const payload = body === undefined ? null : JSON.stringify(body);
+      if (payload) headers = { 'content-type': 'application/json', ...headers };
       const req = http.request({ host: '127.0.0.1', port, path, method, headers: { host: `localhost:${port}`, ...headers } }, (res) => {
         let body = '';
         res.setEncoding('utf8');
@@ -28,7 +31,7 @@ export async function serve(deps) {
         res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body }));
       });
       req.on('error', reject);
-      req.end();
+      req.end(payload ?? undefined);
     });
   return { port, request, close: () => new Promise((r) => server.close(r)) };
 }
