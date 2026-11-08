@@ -59,6 +59,52 @@ setInterval(() => {
 }, 1000);
 
 const jitter = (n) => Math.round((Math.random() * 2 - 1) * n);
+
+// Speed-test endpoints (SPEEDTEST_DOWN_URL / SPEEDTEST_UP_URL point here under dev:mock), so
+// the Speed page and the optimiser work offline. Throughput depends on the band selection like
+// a real cell might: a B3-only anchor does better than the default B7, SA worse, ±15 % noise.
+function mockMbps() {
+  const pref = band.INTF_Preferred_Bands;
+  const sa = band.INTF_Preferred_Access_Technology === 'NR5G-SA';
+  const base = sa ? 70 : pref !== 'Auto' && !pref.includes('B7') ? 170 : 120;
+  return { down: base * (1 + (Math.random() * 2 - 1) * 0.15), up: (sa ? 12 : 22) * (1 + (Math.random() * 2 - 1) * 0.15) };
+}
+// One shared byte budget per direction, refilled every 20 ms: parallel streams split the rate.
+const pacer = { down: 0, up: 0 };
+setInterval(() => {
+  const { down, up } = mockMbps();
+  pacer.down = Math.min(pacer.down + (down * 1e6) / 8 / 50, 4e6);
+  pacer.up = Math.min(pacer.up + (up * 1e6) / 8 / 50, 1e6);
+}, 20);
+const PIECE = Buffer.alloc(16 * 1024);
+function speedDown(req, res, bytes) {
+  res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': bytes });
+  let left = bytes;
+  const timer = setInterval(() => {
+    while (left > 0 && pacer.down >= PIECE.length) {
+      const n = Math.min(PIECE.length, left);
+      pacer.down -= n;
+      left -= n;
+      if (!res.write(n === PIECE.length ? PIECE : PIECE.subarray(0, n))) break;
+    }
+    if (left <= 0) {
+      clearInterval(timer);
+      res.end();
+    }
+  }, 10);
+  res.on('close', () => clearInterval(timer));
+}
+function speedUp(req, res) {
+  // Read only as fast as the uplink "carries": pausing the request applies TCP back-pressure.
+  req.on('data', (chunk) => {
+    pacer.up -= chunk.length;
+    if (pacer.up < 0) {
+      req.pause();
+      setTimeout(() => req.resume(), Math.ceil((-pacer.up / 1e6) * 1000));
+    }
+  });
+  req.on('end', () => send(res, 200, { ok: true }));
+}
 const pick = (a) => a[Math.floor(Math.random() * a.length)];
 const mac = () => Array.from({ length: 6 }, () => crypto.randomBytes(1).toString('hex')).join(':');
 
@@ -185,6 +231,8 @@ http
     console.log(`${req.method} ${url.pathname}${url.search} ${authed ? '(authed)' : ''}`);
     // Restarting: no web server, so connections just fail, as with the real router.
     if (Date.now() < downUntil) return req.socket.destroy();
+    if (url.pathname === '/__down') return speedDown(req, res, Math.min(Number(url.searchParams.get('bytes')) || 1e6, 100e6));
+    if (url.pathname === '/__up' && req.method === 'POST') return speedUp(req, res);
 
     try {
       if (await controls.handleAuth(req, res)) return;
