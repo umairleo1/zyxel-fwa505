@@ -30,13 +30,17 @@ Insight runs on your own computer and talks only to your router. Monitoring and 
 
 - **Log archive:** the router keeps only its last ~100 log lines in memory and loses them on reboot. Insight copies them continuously, deduplicates them and stores them in SQLite. Remote syslog can be added for complete history.
 - **Signal history:** LTE and 5G RSRP, SINR and RSRQ every 5 seconds, plus per-carrier readings for every aggregated band.
-- **Carriers and change events:** the active band combination (for example `B7+B3 + n78+n1`) and total aggregated bandwidth, with an event logged whenever a carrier or serving cell changes.
+- **Carriers and change events:** the active band combination (for example `B7+B3 + n78+n1`) and total aggregated bandwidth, with an event logged whenever a carrier, serving cell or mobile network changes.
+- **Band history per network:** every band and cell used, with time in use and average strength and quality, kept separately for each mobile network (by its MCC+MNC code). Put in a different SIM and its history starts clean: suggestions, recommendations, the optimiser, speed diagnosis and placement spots all use the network in use, and the old network's history is kept for when it comes back.
 - **Reboots and outages:** reboots are detected from uptime, even ones that happen while Insight is stopped, and stamped with the real boot time. Outages are recorded in three kinds: the router stopped answering Insight; it answered but its mobile data connection was down (no SIM, cellular interface down, or no WAN address); or it reported mobile data as up while nothing got through (an **internet stall**, found by Insight's own internet check).
 - **Devices:** first and last seen, connect and disconnect history, a new-device alert, and per-device Wi-Fi signal over time.
 - **Traffic:** live throughput and daily data usage, computed from the router's interface counters.
 - **Radio control:** choose the network mode (automatic, 5G SA, 5G NSA, 4G only) and which bands the modem may use, with each band's measured strength, quality and time in use beside it, and suggestions from that history (for example "strongest 4G + all 5G"). Every change is a 5-minute trial that switches back unless you keep it. Also shows the live carrier aggregation and the serving mast's eNodeB ID and sector, to look up on a coverage map.
 - **Messages:** the SIM's texts as conversations, with replies, new messages, mark-as-read and delete, an unread badge in the sidebar, and a live character and SMS-part counter that uses the router's own encoding (GSM or Unicode, long messages split into parts).
 - **High control:** beneath Radio control, a dedicated page for firmware checks and automatic-update settings, online installation, configuration backup/restore, ROM-D defaults, partial reset, speed test/iperf, WAN editing, account privileges and Z-console redirection. Controls follow the router's actual role and capability flags; the page does not promote an account to `high`.
+- **Speed:** speed tests run from this computer through the router (download, upload, idle latency and latency under load), each stored with the bands, cell and signal it ran under. Run them by hand or every `SPEEDTEST_EVERY_HOURS`; a scheduled test waits while the line is busy, a band trial is on or the connection is down, so it measures the line rather than a share of it.
+- **Optimiser:** tries a few band and network-mode setups (a single strong 4G anchor, strong 4G bands only, without weaker 5G, 5G standalone), each as a Radio control trial, and speed-tests them beside your current setting in repeated rounds. A setup only wins if it's clearly faster (10 % or more) in most rounds without hurting upload or latency, and the router always ends back where it started. A winner is offered as an ordinary trial for you to keep.
+- **Placement:** a live score while you move the router (signal is read every 2 s while the page is open), with each carrier's contribution, a 3-minute trend, and saved spots ranked by capacity.
 
 **Insights the router does not provide**
 
@@ -46,6 +50,7 @@ Insight runs on your own computer and talks only to your router. Monitoring and 
 - **Signal health:** the share of time spent in Good, Fair and Poor signal on the router's own 5-bar scale, worst-10% values, 5G availability, time spent in each band combination, and an hour-of-day profile of signal quality and download that shows busy-hour dips once there are a few days of data.
 - **Recommendations:** prioritised and specific, based on history rather than a single reading, for example "B3 averages 15 dB stronger than B7, your usual primary", "Signal quality limits speed (5G 5.4 dB)", mobile data drops with their causes, or "Phone has weak Wi-Fi".
 - **Usage:** data used per period, plus this month so far and where it's heading.
+- **What limits your speed:** from your speed tests and the signal during each: the radio link (low SINR, or speed that follows it), a busy mast (slower at some hours with steady signal), bufferbloat (with SQM shaping figures from your measured speed), or the band setup.
 
 **Every router page, read-only**
 
@@ -131,6 +136,8 @@ Notes:
   - **The restart exception:** `POST` is allowed to exactly one endpoint, `/cgi-bin/Reboot`, with only the session key on the URL and no body, as the router's own Maintenance → Reboot page sends it, and only while `REBOOT_ENABLED` is on (the default). The button asks twice, is never retried, and works at most once every 5 minutes (also across Insight restarts). The request is logged first, so the reboot that follows is recorded as expected and the outage as a requested restart, not a fault.
   - **High control:** `HIGH_CONTROL_ENABLED=false` disables the dedicated control transport and HTTP routes. The server checks the authenticated router role and firmware flags, validates changes against fresh server-side configuration, and preserves unchanged secrets. ROM-D, account and privilege administration and iperf need high access (a medium login may only edit its own account, which Insight protects); Z-console additionally needs firmware support. Usernames and WAN names must be unique, so an edit can never land on another entry. Confirmations distinguish installing firmware, restoring configuration, changing persistent defaults and saving WAN settings. A disconnected action is not automatically resent. Firmware, restore and partial-reset operations are only settled after the router has been seen going down and coming back, watched with an unauthenticated probe so a half-started router never costs a login attempt; and diagnostics share one result channel with a deadline. A pending band trial blocks conflicting operations.
   - **Recovery:** WAN edits do not have the radio page's guaranteed trial rollback. A change to VLANs, routing or bridge mode can remove the computer's route to the device. Keep a local recovery path. Router configuration exports are separate from Insight's SQLite backups, and ROM-D stores reset defaults rather than a full flash image. Backup files can contain credentials: keep them private.
+  - **Optimiser:** it changes bands only through the band-selection exception above, as trials, and nothing else may change bands, pause collection or start a High control operation while it runs. Cancelling, an error or a finished run all restore the starting setting; if Insight stops mid-run, the trial reverts by itself. It never keeps a setting: applying a winner is your decision.
+  - **Speed tests use mobile data:** up to `SPEEDTEST_MAX_MB` (300 MB) per test, shown before you start the optimiser. They talk to the speed-test server (Cloudflare's by default), never to the router, and only when run by hand, by the optimiser, or on a schedule you set.
   - **What it can't do:** cell (PCI) lock isn't offered: firmware V1.71 hides it and returns nothing for it. Carrier aggregation has no setting at all; the network decides it.
   - **Messages aren't stored:** they're read live from the SIM; Insight keeps no copy, and the router cache skips them. While the dashboard is open, the inbox is checked once a minute for the unread badge.
   - **Allowlist:** router data is read only from an explicit list of endpoints (`server/src/router/catalog.js`).
@@ -156,30 +163,39 @@ See [SECURITY.md](SECURITY.md) for the threat model and how to report a vulnerab
 
 All settings are environment variables, read from `.env` in the project root. See `.env.example`.
 
-| Variable                            | Default                  | Purpose                                                                                                |
-| ----------------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------ |
-| `ROUTER_URL`                        | `https://192.168.1.1`    | Router address (self-signed certificate accepted for this host only)                                   |
-| `ROUTER_USER` / `ROUTER_PASSWORD`   | `admin` / none           | Router admin login                                                                                     |
-| `POLL_INTERVAL_SEC`                 | `120`                    | How often the router log (last 100 lines) is read                                                      |
-| `STATUS_INTERVAL_SEC`               | `5`                      | Signal, carriers and uptime                                                                            |
-| `SYSLOG_PORT` / `SYSLOG_HOST`       | `5514` / `0.0.0.0`       | Remote syslog listener                                                                                 |
-| `SNMP_TRAP_PORT` / `SNMP_TRAP_HOST` | `1162` / `0.0.0.0`       | SNMP trap listener                                                                                     |
-| `SNMP_COMMUNITY`                    | empty (any)              | Only accept traps with this community                                                                  |
-| `INGEST_ALLOWED_SOURCES`            | the router's address     | Comma-separated IPs/hostnames allowed to send syslog and traps; `*` = anyone (loopback always allowed) |
-| `HOST` / `PORT`                     | `127.0.0.1` / `4400`     | Web UI and API                                                                                         |
-| `DASHBOARD_PASSWORD`                | empty (no login)         | HTTP Basic password, any username. Required when `HOST` is not loopback                                |
-| `ALLOWED_HOSTS`                     | empty                    | Extra host names the UI may be opened by (DNS name, reverse proxy)                                     |
-| `SMS_ENABLED`                       | `true`                   | Messages tab: read, send and delete SMS on the router's SIM                                            |
-| `RADIO_CONTROL_ENABLED`             | `true`                   | Radio control: change the preferred network mode and bands, as trials                                  |
-| `REBOOT_ENABLED`                    | `true`                   | System page: Restart router                                                                            |
-| `HIGH_CONTROL_ENABLED`              | `true`                   | High control maintenance and administration. Set all four control flags false for read-only operation  |
-| `ZCONSOLE_PORT` / `ZCONSOLE_HOST`   | `5515` / `0.0.0.0`       | Source-filtered TCP console receiver; port `0` disables it                                             |
-| `DB_PATH`                           | `server/data/insight.db` | SQLite database (relative to the project root)                                                         |
-| `RETAIN_LOGS_DAYS`                  | `180`                    | Log retention                                                                                          |
-| `RETAIN_SIGNAL_DAYS`                | `90`                     | 5-second signal sample retention                                                                       |
-| `RETAIN_WIFI_DAYS`                  | `30`                     | Per-device Wi-Fi sample retention                                                                      |
-| `BACKUP_KEEP`                       | `4`                      | Database backups kept in `<DB dir>/backups/` (`0` = off)                                               |
-| `BACKUP_EVERY_DAYS`                 | `7`                      | Days between database backups                                                                          |
+| Variable                                 | Default                  | Purpose                                                                                                |
+| ---------------------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------ |
+| `ROUTER_URL`                             | `https://192.168.1.1`    | Router address (self-signed certificate accepted for this host only)                                   |
+| `ROUTER_USER` / `ROUTER_PASSWORD`        | `admin` / none           | Router admin login                                                                                     |
+| `POLL_INTERVAL_SEC`                      | `120`                    | How often the router log (last 100 lines) is read                                                      |
+| `STATUS_INTERVAL_SEC`                    | `5`                      | Signal, carriers and uptime                                                                            |
+| `SYSLOG_PORT` / `SYSLOG_HOST`            | `5514` / `0.0.0.0`       | Remote syslog listener                                                                                 |
+| `SNMP_TRAP_PORT` / `SNMP_TRAP_HOST`      | `1162` / `0.0.0.0`       | SNMP trap listener                                                                                     |
+| `SNMP_COMMUNITY`                         | empty (any)              | Only accept traps with this community                                                                  |
+| `INGEST_ALLOWED_SOURCES`                 | the router's address     | Comma-separated IPs/hostnames allowed to send syslog and traps; `*` = anyone (loopback always allowed) |
+| `HOST` / `PORT`                          | `127.0.0.1` / `4400`     | Web UI and API                                                                                         |
+| `DASHBOARD_PASSWORD`                     | empty (no login)         | HTTP Basic password, any username. Required when `HOST` is not loopback                                |
+| `ALLOWED_HOSTS`                          | empty                    | Extra host names the UI may be opened by (DNS name, reverse proxy)                                     |
+| `SMS_ENABLED`                            | `true`                   | Messages tab: read, send and delete SMS on the router's SIM                                            |
+| `RADIO_CONTROL_ENABLED`                  | `true`                   | Radio control: change the preferred network mode and bands, as trials                                  |
+| `REBOOT_ENABLED`                         | `true`                   | System page: Restart router                                                                            |
+| `HIGH_CONTROL_ENABLED`                   | `true`                   | High control maintenance and administration. Set all four control flags false for read-only operation  |
+| `ZCONSOLE_PORT` / `ZCONSOLE_HOST`        | `5515` / `0.0.0.0`       | Source-filtered TCP console receiver; port `0` disables it                                             |
+| `DB_PATH`                                | `server/data/insight.db` | SQLite database (relative to the project root)                                                         |
+| `RETAIN_LOGS_DAYS`                       | `180`                    | Log retention                                                                                          |
+| `RETAIN_SIGNAL_DAYS`                     | `90`                     | 5-second signal sample retention                                                                       |
+| `RETAIN_WIFI_DAYS`                       | `30`                     | Per-device Wi-Fi sample retention                                                                      |
+| `BACKUP_KEEP`                            | `4`                      | Database backups kept in `<DB dir>/backups/` (`0` = off)                                               |
+| `BACKUP_EVERY_DAYS`                      | `7`                      | Days between database backups                                                                          |
+| `SPEEDTEST_ENABLED`                      | `true`                   | Speed page, speed tests and (with Radio control) the optimiser                                         |
+| `SPEEDTEST_EVERY_HOURS`                  | `0` (off)                | Scheduled speed tests, ±10 % so they drift across the day                                              |
+| `SPEEDTEST_MAX_MB`                       | `300`                    | Data cap per test; the transfer stops early at this much                                               |
+| `SPEEDTEST_BUSY_MBPS`                    | `5`                      | A scheduled test waits while other traffic is above this                                               |
+| `SPEEDTEST_DOWNLOAD_SEC` / `_UPLOAD_SEC` | `8` / `6`                | Length of each direction                                                                               |
+| `SPEEDTEST_STREAMS`                      | `4`                      | Parallel connections per direction                                                                     |
+| `SPEEDTEST_DOWN_URL` / `_UP_URL`         | Cloudflare speed test    | Download URL with `{bytes}` for the size; upload URL that accepts a POST                               |
+| `SPEEDTEST_LATENCY_TARGET`               | first internet target    | `host:port` timed with a TCP handshake for latency                                                     |
+| `RETAIN_SPEED_DAYS`                      | `400`                    | Speed test retention                                                                                   |
 
 ## Accuracy and limitations
 
@@ -193,6 +209,9 @@ All settings are environment variables, read from `.env` in the project root. Se
   - **What it cannot know:** why, unless the router's log says so. A crash, a power cut and a manual reboot look identical, which is why reboots show "no logged reason".
 - **Memory includes cache:** the router reports total and free memory only, so "memory in use" includes reclaimable cache.
 - **Temperature:** none is exposed by this firmware (web API or shell), so Insight does not show one.
+- **Speed tests measure the whole path from this computer:** its own link counts too, so run Insight on a machine wired to the router (or close on 5 GHz) for numbers about the mobile connection. Speed is taken after a warm-up (the first 30 % of each transfer, while TCP ramps up), and latency under load is the median TCP handshake time during each transfer, with lost probes counted as the timeout.
+- **Band history before per-network tracking:** history recorded by earlier versions didn't note the network. It's kept as "unknown network" and joins a network only when that network's serving cells match it: one cell on the same band, PCI and channel (operators own different channels), or two on band and PCI. A different SIM never inherits it.
+- **Placement score and capacity index are estimates:** the score maps the bandwidth-weighted SINR from −5 dB (0) to 25 dB (100); the capacity index adds bandwidth × spectral efficiency per carrier (attenuated Shannon, as 3GPP TR 36.942 models a real link). They compare spots and setups; they aren't speeds, because the cell is shared and MIMO multiplies it.
 - **History needs Insight running:** while the computer sleeps, only totals (data used, reboots) can be recovered afterwards, and charts hatch that time as "not monitored". Run Insight on an always-on machine for complete history.
 
 ## Development
@@ -210,6 +229,8 @@ npm test             # unit tests (node:test)
 
 The mock keeps a band selection that Radio control can change. It also has an SMS inbox (GSM, Unicode and a named sender) that receives a new text every 7 minutes, and accepts sends, marking read and deletes, so the Messages tab can be tried without touching a real SIM.
 
+It also serves speed-test endpoints (`/__down`, `/__up`), which `npm run dev:mock` points the speed tests at, so the Speed page and the optimiser work offline. Throughput depends on the band selection (a B3-only anchor is faster than the default, 5G SA slower), which gives the optimiser something to find.
+
 To exercise mobile-data outages, set `MOCK_WAN_DROP=<down>/<cycle>` in seconds, for example `MOCK_WAN_DROP=90/600 npm run mock -w server`: the router stays reachable but loses its WAN address for 90 s out of every 600 s.
 
 ### Project structure
@@ -225,6 +246,7 @@ server/src/
   insights/             Configuration audit, statistics, recommendations, timeline and monitored coverage
   sms/                  Messages: live SIM inbox, send, mark read, delete, send limits
   radio/                Band selection: validation, trials that revert unless kept
+  speed/                Speed tests (measurement, schedule), the band optimiser, diagnosis, placement
   storage/              SQLite schema, statement cache, one repository per area, retention
   events/               Server-Sent Events hub
   http/                 Express app, query parsing, one route module per API area
@@ -236,7 +258,7 @@ web/src/
   hooks/                useAsync, useRouterData, useServerEvents, useUrlFilters, ...
   lib/                  Formatting, labels, chart series and ranges
   components/           ui/ (building blocks), charts/, shell/ (sidebar, top bar)
-  features/             Dashboard-, cellular- and insights-specific components
+  features/             Dashboard-, cellular-, insights-, control- and speed-specific components
   pages/                One component per route; settings/ mirrors the admin pages
   styles/               Tokens, base, layout, components, charts, pages
 ```
