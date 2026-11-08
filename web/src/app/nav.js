@@ -1,13 +1,16 @@
 import * as I from '../components/ui/Icons.jsx';
 
 // Sidebar structure. "settings" pages mirror the router's admin menu, read-only.
-// `requires` hides an item unless the server reports that feature (status.smsEnabled, status.radioEnabled, status.controlEnabled).
+// `requires` hides an item unless the server reports that feature (status.smsEnabled, status.radioEnabled, status.controlEnabled, status.speed).
 export const NAV = [
   {
     group: 'Overview',
     items: [
       { id: 'dashboard', label: 'Dashboard', icon: I.Grid },
       { id: 'insights', label: 'Insights', icon: I.Sparkle },
+      // Speed tests and the optimiser; placement needs only the live signal.
+      { id: 'speed', label: 'Speed', icon: I.Gauge, requires: 'speedEnabled' },
+      { id: 'placement', label: 'Placement', icon: I.Crosshair },
       // The pages that write to the router: SMS, the preferred network mode and bands, and High control.
       { id: 'messages', label: 'Messages', icon: I.Message, requires: 'smsEnabled' },
       { id: 'radio', label: 'Radio control', icon: I.Sliders, requires: 'radioEnabled' },

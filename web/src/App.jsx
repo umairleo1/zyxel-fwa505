@@ -23,11 +23,15 @@ const loadSettings = () => import('./pages/settings/Settings.jsx');
 const loadMessages = () => import('./pages/Messages.jsx');
 const loadRadio = () => import('./pages/Radio.jsx');
 const loadHighControl = () => import('./pages/HighControl.jsx');
+const loadSpeed = () => import('./pages/Speed.jsx');
+const loadPlacement = () => import('./pages/Placement.jsx');
 const Insights = lazy(loadInsights);
 const Settings = lazy(loadSettings);
 const Messages = lazy(loadMessages);
 const Radio = lazy(loadRadio);
 const HighControl = lazy(loadHighControl);
+const Speed = lazy(loadSpeed);
+const Placement = lazy(loadPlacement);
 
 // With the event stream connected, data refreshes on push; the slow tick only slides
 // preset time windows forward. Without it, fall back to polling.
@@ -48,6 +52,8 @@ const PAGES = {
   messages: Messages,
   radio: Radio,
   'high-control': HighControl,
+  speed: Speed,
+  placement: Placement,
 };
 
 export default function App() {
@@ -106,7 +112,10 @@ export default function App() {
   // shows the page (with its loading spinner) instead of waiting on a download.
   useEffect(() => {
     const id = setTimeout(
-      () => [loadInsights, loadSettings, loadMessages, loadRadio, loadHighControl].forEach((load) => load().catch(() => {})),
+      () =>
+        [loadInsights, loadSettings, loadMessages, loadRadio, loadHighControl, loadSpeed, loadPlacement].forEach((load) =>
+          load().catch(() => {}),
+        ),
       2000,
     );
     return () => clearTimeout(id);
@@ -169,7 +178,12 @@ export default function App() {
             open={menuOpen}
             onClose={() => setMenuOpen(false)}
             device={status?.collector.router?.device}
-            features={{ smsEnabled: !!status?.smsEnabled, radioEnabled: !!status?.radioEnabled, controlEnabled: !!status?.controlEnabled }}
+            features={{
+              smsEnabled: !!status?.smsEnabled,
+              radioEnabled: !!status?.radioEnabled,
+              controlEnabled: !!status?.controlEnabled,
+              speedEnabled: !!status?.speed,
+            }}
             badges={{ messages: status?.smsEnabled ? (status.smsUnread ?? 0) : 0 }}
           />
           <div className="shell-main">

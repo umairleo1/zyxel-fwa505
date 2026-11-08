@@ -19,6 +19,17 @@ export const SEVERITY_SERIES = [
   { key: 'info', label: 'Info', color: 'var(--sev-info)' },
 ];
 
+/**
+ * A mobile network for headings: its operator name, else its code. '' (history from before
+ * networks were told apart) and unknown read as such.
+ */
+export function networkLabel(network) {
+  if (!network) return 'this network';
+  if (network.operator) return network.operator;
+  if (network.plmn) return `network ${network.plmn}`;
+  return 'an unknown network';
+}
+
 /** Chart series with fixed colours, so an entity keeps its colour on every page. */
 export const SERIES = {
   lte: { key: 'lte', label: 'LTE', color: 'var(--series-1)' },
@@ -31,6 +42,11 @@ export const SERIES = {
   rttAvg: { key: 'rttAvg', label: 'Average', color: 'var(--series-1)' },
   rttMax: { key: 'rttMax', label: 'Peak', color: 'var(--series-2)' },
   failedPct: { key: 'failedPct', label: 'Failed checks', color: 'var(--stall)' },
+  speedDown: { key: 'down', label: 'Download', color: 'var(--series-1)' },
+  speedUp: { key: 'up', label: 'Upload', color: 'var(--series-3)' },
+  latencyIdle: { key: 'idle', label: 'Idle', color: 'var(--series-1)' },
+  latencyLoaded: { key: 'loaded', label: 'Under load', color: 'var(--series-2)' },
+  placementScore: { key: 'score', label: 'Score', color: 'var(--series-1)' },
 };
 
 /** Time-range presets. `key` is used in the URL, `ms` by pages with their own picker. */

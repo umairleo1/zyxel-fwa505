@@ -86,6 +86,28 @@ export const api = {
   radioKeep: () => request('/api/radio/keep', { method: 'POST' }),
   radioRevert: () => request('/api/radio/revert', { method: 'POST' }),
   radioAutomatic: () => request('/api/radio/automatic', { method: 'POST' }),
+  // Speed tests from this machine, the band optimiser and placement.
+  speed: ({ from } = {}) => request(`/api/speed${qs({ from })}`),
+  speedRun: () => request('/api/speed/run', { method: 'POST' }),
+  speedCancel: () => request('/api/speed/cancel', { method: 'POST' }),
+  optimiser: () => request('/api/speed/optimiser'),
+  optimiserStart: ({ rounds, arms }) =>
+    request('/api/speed/optimiser', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rounds, arms }),
+    }),
+  optimiserCancel: () => request('/api/speed/optimiser/cancel', { method: 'POST' }),
+  placement: () => request('/api/placement'),
+  placementBoost: (seconds) =>
+    request('/api/placement/boost', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ seconds }) }),
+  placementCapture: ({ name, seconds }) =>
+    request('/api/placement/spots', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, seconds }),
+    }),
+  placementDelete: (id) => request(`/api/placement/spots/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   smsSetOwnNumber: (number) =>
     request('/api/sms/own-number', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ number }) }),
 
