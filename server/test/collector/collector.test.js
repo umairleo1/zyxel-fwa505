@@ -334,3 +334,60 @@ test('a mobile data drop still open at shutdown is stored, marked as cut short',
   assert.equal(outages[0].kind, 'wan');
   assert.equal(outages[0].reason, 'Cellular interface down (Insight stopped)');
 });
+
+test('a boost reads signal every 2 s for a while, capped and renewable', async () => {
+  const { c } = harness([]);
+  let reads = 0;
+  c.client.getCellwanStatus = async () => (reads++, {});
+  await c.tickForTest(); // a normal poll: logs and status
+  // 1.5 s later: within the usual 5 s interval, so no status read...
+  c.lastStatusPoll -= 1500;
+  await c.tickForTest();
+  assert.equal(reads, 1);
+  // ...but boosted, the 2 s interval is due (1 s grace, like the normal interval).
+  const left = c.boost(60_000);
+  assert.ok(left > 59_000 && left <= 60_000);
+  await c.tickForTest();
+  assert.equal(reads, 2);
+  assert.ok(c.state.boostUntil > Date.now());
+  assert.ok(c.boost(60 * 60_000) <= 5 * 60_000, 'one boost lasts five minutes at most');
+  await c.stop();
+});
+
+test('a change of mobile network is logged and band history is told which network each read was on', async () => {
+  const events = [];
+  const recorded = [];
+  let network = 'Current_EE_NR5G-NSA_23430';
+  const db = {
+    lastRaw: () => [],
+    insertMany: (rows) => events.push(...rows),
+    insertOutage() {},
+    insertMetric() {},
+    recordCarriers: (ts, carriers, net) => recorded.push(net),
+    insertSystem() {},
+    getMeta: () => null,
+    setMeta() {},
+  };
+  const client = {
+    getLog: async () => [],
+    getStatus: async () => ({ Object: [{ DeviceInfo: { UpTime: 100 }, CellIntfInfo: { NetworkInUse: 'Current_EE_NR5G-NSA_23430' } }] }),
+    getCellwanStatus: async () => ({ INTF_Network_In_Use: network }),
+    logout: async () => {},
+    suspend() {},
+    resume() {},
+  };
+  const c = new Collector({ client, db, pollIntervalSec: 120, statusIntervalSec: 5, log: { warn() {}, info() {} } });
+  await c.tickForTest();
+  network = 'Current_Vodafone UK_LTE_23415';
+  c.lastStatusPoll = 0;
+  await c.tickForTest();
+  assert.deepEqual(recorded, [
+    { plmn: '23430', operator: 'EE' },
+    { plmn: '23415', operator: 'Vodafone UK' },
+  ]);
+  const changed = events.filter((e) => /Mobile network changed/.test(e.message));
+  assert.equal(changed.length, 1);
+  assert.equal(changed[0].message, 'Mobile network changed: EE (23430) → Vodafone UK (23415)');
+  assert.equal(changed[0].facility, 'cell', 'marks the dashboard timeline like other cell changes');
+  await c.stop();
+});

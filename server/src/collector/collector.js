@@ -12,6 +12,10 @@ import { SAME_BOOT_MS, detectReboot, rebootMessage, uptimeContinues } from './re
 const clock = () => performance.timeOrigin + performance.now();
 
 const FULL_STATUS_MS = 60_000; // device info + uptime; signal comes from cellwan_status every poll
+// While boosted (Placement page open, optimiser settling) signal is read this often. The live
+// read is one small high-priority request; 2 s keeps the router's CGI comfortably idle.
+const FAST_STATUS_MS = 2000;
+const MAX_BOOST_MS = 5 * 60_000; // a boost has to be renewed: a closed tab can't leave it on
 // A mobile-data drop starts at the last reading that was up, if that's this recent;
 // otherwise (first reading after a start or a router outage) at the first one that wasn't.
 const WAN_LAST_UP_MS = 120_000;
@@ -50,7 +54,9 @@ export class Collector extends EventEmitter {
     this.outageStart = null;
     this.wan = wanIdle();
     this.lastCell = null;
+    this.lastNetwork = null; // { plmn, operator } of the previous read that named one
     this.cellwanSupported = true;
+    this.fastUntil = 0; // monotonic ms: faster signal reads until then (see boost)
     this.state = {
       phase: 'starting', // starting | ok | backoff | halted | paused
       lastSuccessAt: null,
@@ -150,6 +156,29 @@ export class Collector extends EventEmitter {
   }
 
   /**
+   * Read signal every FAST_STATUS_MS for the next `ms` (at most MAX_BOOST_MS; call again to
+   * extend). For live views that need quicker readings than the usual interval. Returns the
+   * boost's remaining ms.
+   */
+  boost(ms) {
+    const was = this.#fast();
+    this.fastUntil = Math.max(this.fastUntil, clock() + Math.min(Math.max(0, ms), MAX_BOOST_MS));
+    // Starting a boost: don't wait out the rest of a slow interval.
+    if (!was && this.state.phase === 'ok' && !this.state.maintenance && !this.inFlight) this.#schedule(0);
+    const left = Math.round(this.fastUntil - clock());
+    this.state.boostUntil = Date.now() + left; // wall clock, for the UI
+    return left;
+  }
+
+  #fast() {
+    return clock() < this.fastUntil;
+  }
+
+  #statusEvery() {
+    return this.#fast() ? Math.min(FAST_STATUS_MS, this.statusMs) : this.statusMs;
+  }
+
+  /**
    * Poll logs and status right away (e.g. on an SNMP trap) instead of waiting
    * for the next interval. Throttled so a burst of traps causes one poll.
    */
@@ -198,7 +227,7 @@ export class Collector extends EventEmitter {
         this.state.lastLogsAt = Date.now();
       }
       if (stopped()) return;
-      if (t - this.lastStatusPoll >= this.statusMs - 1000) {
+      if (t - this.lastStatusPoll >= this.#statusEvery() - 1000) {
         await this.#pollStatus();
         this.lastStatusPoll = done();
         this.state.lastStatusAt = Date.now();
@@ -219,7 +248,7 @@ export class Collector extends EventEmitter {
       this.state.phase = 'ok';
       this.state.lastSuccessAt = Date.now();
       this.failures = 0;
-      this.#schedule(this.pollAgain ? 1000 : Math.min(this.pollMs, this.statusMs));
+      this.#schedule(this.pollAgain ? 1000 : Math.min(this.pollMs, this.#statusEvery()));
     } catch (err) {
       if (!stopped()) this.#handleError(err);
     } finally {
@@ -336,6 +365,14 @@ export class Collector extends EventEmitter {
       this.#event('notice', `Serving cell changed: ${this.lastCell.label} → ${servingCell.label}`, 'cell');
     }
     if (servingCell) this.lastCell = servingCell;
+    // A different network (SIM swap, roaming): band history and comparisons start afresh for it.
+    // Logged as a cell change, which it also is, so it marks the dashboard timeline.
+    const network = signal?.plmn ? { plmn: signal.plmn, operator: signal.operator ?? null } : null;
+    if (network && this.lastNetwork && network.plmn !== this.lastNetwork.plmn) {
+      const name = (n) => (n.operator ? `${n.operator} (${n.plmn})` : n.plmn);
+      this.#event('notice', `Mobile network changed: ${name(this.lastNetwork)} → ${name(network)}`, 'cell');
+    }
+    if (network) this.lastNetwork = network;
     const wan = wanStatus(data, cellwan);
     this.#trackWan(wan, now);
 
@@ -353,7 +390,7 @@ export class Collector extends EventEmitter {
       cellwan: cellwan ? { ...scalars(cellwan), SCC_Info: cellwan.SCC_Info ?? null } : null,
     };
     // Also with no carriers: a gap in coverage must end the bands' sessions.
-    this.#safely(() => this.db.recordCarriers(now, ca.carriers));
+    this.#safely(() => this.db.recordCarriers(now, ca.carriers, network));
     if (signal) {
       const { lte, nr: n } = signal;
       this.#safely(() =>
