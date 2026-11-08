@@ -6,6 +6,7 @@
     "./quality": "./quality.js",
     "./radio": "./radio.js",
     "./severity": "./severity.js",
-    "./sms": "./sms.js"
+    "./sms": "./sms.js",
+    "./speed": "./speed.js"
   }
 }
