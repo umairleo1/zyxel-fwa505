@@ -9,6 +9,7 @@ import { samplesRepo } from './samples.js';
 import { devicesRepo } from './devices.js';
 import { reliabilityRepo } from './reliability.js';
 import { bandsRepo } from './bands.js';
+import { speedRepo } from './speed.js';
 import { prune } from './retention.js';
 
 // Pages copied per backup step (4 KB each); the event loop runs between steps.
@@ -39,6 +40,7 @@ export function openDb(file, hooks = {}) {
     ...devicesRepo(sql),
     ...reliabilityRepo(sql),
     ...bands,
+    ...speedRepo(sql),
     flush,
     /** Run several repository writes as one commit. */
     batch: (fn) => transaction(db, fn),
