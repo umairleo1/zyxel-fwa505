@@ -34,6 +34,7 @@ export function createStatus({
   internet = null,
   speed = null,
   optimiser = null,
+  ai = null,
 }) {
   return () => ({
     routerUrl: config.routerUrl,
@@ -59,6 +60,8 @@ export function createStatus({
     speed: speed?.state ?? null,
     // Optimiser run in progress and the last one (null without band control or speed tests).
     optimiser: optimiser?.state ?? null,
+    // Local AI model for Insights (null when AI_INSIGHTS_ENABLED=false): availability and the last run.
+    ai: ai?.state ?? null,
     syslog: syslog.state,
     snmp: snmp.state,
     routerLoad: client.loadSnapshot(),

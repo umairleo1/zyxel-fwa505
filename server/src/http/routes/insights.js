@@ -9,8 +9,11 @@ import { createFreshGate, INSIGHTS_FRESH_MS } from '../limits.js';
 const AUDIT_TTL_MS = 5 * 60e3; // configuration rarely changes
 const RESULT_TTL_MS = 30e3; // aggregates over days don't move within 30 s
 const MAX_RESULTS = 20; // one entry per distinct span; bounded so odd ?from/?to can't grow it
+/** ?fresh=1 / true asks for a recomputed answer; absent, empty, 0 or false don't. */
+const wantsFresh = (q) => q.fresh != null && !/^(|0|false|no)$/i.test(String(q.fresh));
+const AI_TTL_MS = 10 * 60e3; // a local 14B model takes tens of seconds: reuse an answer this long
 
-export function insightsRoutes({ db, routerData, collector, internet }) {
+export function insightsRoutes({ db, routerData, collector, internet, ai = null }) {
   const r = Router();
   let audit = null;
   const results = new Map(); // span (minutes) -> { at, body }
@@ -27,12 +30,11 @@ export function insightsRoutes({ db, routerData, collector, internet }) {
     return audit;
   }
 
-  r.get('/insights', async (req, res) => {
-    const { from, to } = timeRange(req.query, 7 * 86400e3);
+  /** The Insights page body for a span: cached for RESULT_TTL_MS per span. */
+  async function insightsFor({ from, to }, fresh) {
     const key = Math.round((to - from) / 60e3);
-    const fresh = !!req.query.fresh && freshGate.allow('insights');
     const hit = results.get(key);
-    if (hit && !fresh && Date.now() - hit.at < RESULT_TTL_MS) return res.json(hit.body);
+    if (hit && !fresh && Date.now() - hit.at < RESULT_TTL_MS) return hit.body;
 
     const rows = db.traffic(from - TRAFFIC_PAD_MS, to);
     const traffic = summarizeTraffic(rows, { from, to, bucketMs: bucketFor(to - from, 120) });
@@ -66,7 +68,58 @@ export function insightsRoutes({ db, routerData, collector, internet }) {
     results.delete(key);
     results.set(key, { at: Date.now(), body });
     if (results.size > MAX_RESULTS) results.delete(results.keys().next().value); // oldest first
-    res.json(body);
+    return body;
+  }
+
+  r.get('/insights', async (req, res) => {
+    const fresh = wantsFresh(req.query) && freshGate.allow('insights');
+    res.json(await insightsFor(timeRange(req.query, 7 * 86400e3), fresh));
+  });
+
+  // AI summary and advice from a local model (see insights/ai.js). Never fails: without the
+  // model it answers source 'rules' with the rule-based recommendations and the reason.
+  // One run per span is shared by everyone asking for it, and stopped once they all leave.
+  const aiAnswers = new Map(); // span (minutes) -> { promise, done, waiters, controller }
+  const aiGate = createFreshGate(AI_TTL_MS / 10);
+  r.get('/insights/ai', async (req, res) => {
+    const range = timeRange(req.query, 7 * 86400e3);
+    const insights = await insightsFor(range, false);
+    const rules = (reason) => ({ source: 'rules', reason, model: ai?.state.model ?? null, recommendations: insights.recommendations });
+    if (!ai) return res.json(rules('AI insights are turned off (AI_INSIGHTS_ENABLED=false)'));
+
+    const key = Math.round((range.to - range.from) / 60e3);
+    const asked = wantsFresh(req.query);
+    let hit = aiAnswers.get(key);
+    // A run in progress is joined, even when asked to regenerate: a second one would only queue.
+    const stale = hit?.done && (Date.now() - hit.at > AI_TTL_MS || (asked && aiGate.allow(key)));
+    if (!hit || stale) {
+      const controller = new AbortController();
+      hit = { at: null, done: false, waiters: 0, controller };
+      hit.promise = ai.advise(insights, { signal: controller.signal, recheck: asked });
+      aiAnswers.delete(key);
+      aiAnswers.set(key, hit);
+      if (aiAnswers.size > MAX_RESULTS) aiAnswers.delete(aiAnswers.keys().next().value);
+      const settle = hit;
+      settle.promise.then(
+        (answer) => Object.assign(settle, { done: true, at: answer.at ?? Date.now() }),
+        // A failure isn't cached: the next request tries again (availability itself is cached).
+        () => aiAnswers.get(key) === settle && aiAnswers.delete(key),
+      );
+    }
+
+    const mine = hit;
+    mine.waiters++;
+    res.on('close', () => {
+      mine.waiters--;
+      // Nobody is waiting any more (page closed, span changed): free the model for others.
+      if (!res.writableFinished && !mine.waiters && !mine.done) mine.controller.abort(new Error('nobody is waiting for this answer'));
+    });
+    try {
+      const answer = await mine.promise;
+      if (!res.writableEnded) res.json({ source: 'ai', at: mine.at, ...answer });
+    } catch (e) {
+      if (!res.destroyed) res.json(rules(e.message));
+    }
   });
 
   return r;

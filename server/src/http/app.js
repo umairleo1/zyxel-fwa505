@@ -15,7 +15,7 @@ import { basicAuth, csrfGuard, hostGuard, isLoopback, liveAllowedHostnames, secu
 
 /**
  * Build the Express app. deps: { db, hub, collector, internet?, routerData, statusPayload, staticDir?,
- * speed?, optimiser?, placement?,
+ * speed?, optimiser?, placement?, ai?,
  * statusIntervalSec?, security?: { password?, allowedHosts?: Set<string> | () => Set<string> } }
  */
 export function createApp(deps) {

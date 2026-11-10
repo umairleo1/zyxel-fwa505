@@ -24,6 +24,7 @@ import { createControlService } from './control/service.js';
 import { createSpeedService } from './speed/service.js';
 import { createOptimiser } from './speed/optimiser.js';
 import { createPlacement } from './speed/placement.js';
+import { createAiAdvisor } from './insights/ai.js';
 import { findKey } from './lib/util.js';
 
 if (!config.routerPassword) {
@@ -139,6 +140,20 @@ const speed = config.speedtestEnabled
 const optimiser =
   speed && config.radioControlEnabled ? createOptimiser({ radio, speed, collector, db, onChange: () => pushStatus() }) : null;
 const placement = createPlacement({ db, collector });
+const ai = config.aiInsightsEnabled
+  ? createAiAdvisor({ url: config.ollama.url, model: config.ollama.model, timeoutMs: config.ollama.timeoutSec * 1000 })
+  : null;
+// Say once at start whether AI insights will work, so a missing model isn't a mystery. Then keep
+// checking: the page offers AI only while Ollama answers, and should notice it starting later.
+ai?.available().then((c) =>
+  console.info(c.ok ? `[ai] insights by ${config.ollama.model} via ${config.ollama.url}` : `[ai] off until fixed: ${c.reason}`),
+);
+const aiCheck =
+  ai &&
+  setInterval(() => {
+    const was = ai.state.available;
+    ai.available({ force: true }).then((c) => c.ok !== was && pushStatus());
+  }, 60e3);
 const statusPayload = createStatus({
   config,
   collector,
@@ -153,6 +168,7 @@ const statusPayload = createStatus({
   internet,
   speed,
   optimiser,
+  ai,
 });
 
 // Status changes on every poll and every syslog/trap packet: push at most once per second.
@@ -246,6 +262,7 @@ const app = createApp({
   speed,
   optimiser,
   placement,
+  ai,
   statusPayload,
   statusIntervalSec: config.statusIntervalSec,
   security: {
@@ -287,6 +304,7 @@ async function shutdown(code = 0) {
     samplers.stop();
     internet?.stop();
     optimiser?.stop();
+    clearInterval(aiCheck);
     speed?.stop();
     sms.stop();
     radio.stop();
