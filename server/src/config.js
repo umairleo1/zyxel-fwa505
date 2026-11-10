@@ -65,6 +65,14 @@ export const config = {
     // A scheduled test waits while other traffic is above this, so it measures the line, not a share of it.
     busyMbps: num(env.SPEEDTEST_BUSY_MBPS, 5),
   },
+  // AI summary and advice on the Insights page from a local Ollama model (see insights/ai.js).
+  // Without Ollama or the model the page shows the rule-based recommendations, as before.
+  aiInsightsEnabled: !/^(0|false|no|off)$/i.test(env.AI_INSIGHTS_ENABLED ?? ''),
+  ollama: {
+    url: env.OLLAMA_URL || 'http://127.0.0.1:11434',
+    model: env.OLLAMA_MODEL || 'qwen3:14b',
+    timeoutSec: num(env.OLLAMA_TIMEOUT_SEC, 180),
+  },
   // Extra names the dashboard may be reached by (reverse proxy, DNS name), on top of
   // localhost, this machine's addresses and hostname.
   allowedHosts: csv(env.ALLOWED_HOSTS),
