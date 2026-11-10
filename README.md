@@ -2,7 +2,7 @@
 
 A local monitoring and diagnostics dashboard for the **Zyxel FWA505** 5G router. It collects what the router's own admin page only shows in the moment: signal and carrier history, connected devices, traffic, reboots and logs. It then turns that history into insights, such as configuration risks, reliability and actionable signal advice.
 
-Insight runs on your own computer and talks only to your router. Monitoring and the settings mirrors are read-only. Dedicated controls handle SMS, band trials, restart, and the firmware, backup, diagnostics, WAN and account operations on **High control**. Set `SMS_ENABLED=false`, `RADIO_CONTROL_ENABLED=false`, `REBOOT_ENABLED=false` and `HIGH_CONTROL_ENABLED=false` for fully read-only operation.
+Insight runs on your own computer and talks only to your router (and, if you set it up, a local AI model through [Ollama](https://ollama.com) for plain-language insights). Monitoring and the settings mirrors are read-only. Dedicated controls handle SMS, band trials, restart, and the firmware, backup, diagnostics, WAN and account operations on **High control**. Set `SMS_ENABLED=false`, `RADIO_CONTROL_ENABLED=false`, `REBOOT_ENABLED=false` and `HIGH_CONTROL_ENABLED=false` for fully read-only operation.
 
 ![Dashboard](docs/screenshots/dashboard.png)
 
@@ -49,6 +49,7 @@ Insight runs on your own computer and talks only to your router. Monitoring and 
 - **Reliability:** availability, outage durations, and reboots with or without a logged reason.
 - **Signal health:** the share of time spent in Good, Fair and Poor signal on the router's own 5-bar scale, worst-10% values, 5G availability, time spent in each band combination, and an hour-of-day profile of signal quality and download that shows busy-hour dips once there are a few days of data.
 - **Recommendations:** prioritised and specific, based on history rather than a single reading, for example "B3 averages 15 dB stronger than B7, your usual primary", "Signal quality limits speed (5G 5.4 dB)", mobile data drops with their causes, or "Phone has weak Wi-Fi".
+- **AI insights (optional):** a local model such as `qwen3:14b`, run by Ollama on your own machine, reads the same figures and writes a short summary of how the connection has been, plus prioritised advice that points to Radio control, Speed or Placement where they fit. An **AI analysis / Rule-based** switch shows either list. While Ollama isn't running the page is rule-based only, as before, and the switch appears within a minute of Ollama starting.
 - **Usage:** data used per period, plus this month so far and where it's heading.
 - **What limits your speed:** from your speed tests and the signal during each: the radio link (low SINR, or speed that follows it), a busy mast (slower at some hours with steady signal), bufferbloat (with SQM shaping figures from your measured speed), or the band setup.
 
@@ -110,6 +111,14 @@ ROUTER_USER=supervisor MOCK_ZCONSOLE_ENABLED=true npm run dev:mock
 
 These are mock-only credentials (`mock`), not a way to elevate a real router account. Mock firmware installs and restores simulate a restart. The page keeps an unverified restore outcome visible until you acknowledge it; a readable router alone does not prove that every restored setting is correct.
 
+**Optional: AI insights.** Install [Ollama](https://ollama.com), pull a model and keep Ollama running:
+
+```sh
+ollama pull qwen3:14b    # ~9 GB; needs about 16 GB of RAM
+```
+
+Restart Insight and open **Insights**. The startup log shows `[ai] insights by qwen3:14b …` when the model is ready, or the reason it isn't. The AI analysis shows its progress while the model works (about 30–60 s on a recent Mac), with the rule-based findings a click away meanwhile. For another model or a different machine, set `OLLAMA_MODEL` and `OLLAMA_URL`. `AI_INSIGHTS_ENABLED=false` turns it off.
+
 **Using the router's admin page while Insight runs:** press **Pause** in the top bar. Insight logs out and releases its router session. Press **Resume** afterwards.
 
 ## Optional: real-time events from the router
@@ -142,6 +151,7 @@ Notes:
   - **Messages aren't stored:** they're read live from the SIM; Insight keeps no copy, and the router cache skips them. While the dashboard is open, the inbox is checked once a minute for the unread badge.
   - **Allowlist:** router data is read only from an explicit list of endpoints (`server/src/router/catalog.js`).
   - **Excluded from ordinary polling:** endpoints that do work even on a GET are left out of the generic read catalog, including network and PLMN scans, diagnostics, calibration, backup and online firmware checks. High control invokes its allowlisted actions only on explicit requests.
+- **AI insights stay local:** the Insights page can ask a local model via [Ollama](https://ollama.com) (`ollama pull qwen3:14b`) for a summary and prioritised advice. It gets only the page's aggregates (reliability, signal statistics, band history, audit results, the rule-based findings): no logs or SMS, and devices only as stand-ins ("Wi-Fi device 1") whose real names Insight puts back into the answer on your machine, so no MAC address or device name reaches the model. Only `OLLAMA_URL` receives the request. If Ollama isn't running, the model isn't pulled, an answer takes longer than `OLLAMA_TIMEOUT_SEC` or isn't valid, the page shows the rule-based recommendations, which are always computed. Answers are reused for 10 minutes per period and **Regenerate** asks anew. One answer is generated at a time; one nobody is waiting for any more (page closed, period changed) is stopped.
 - **Secrets never reach the browser:** the router returns some credentials in plain text, such as the Wi-Fi passphrase, SNMP communities and service passwords. They are masked on the server. The configuration audit runs on the raw values server-side.
 - **Respects the router:**
   - **Lockout protection:** a rejected login halts collection instead of retrying, because the router locks the account after 3 failures.
@@ -196,6 +206,9 @@ All settings are environment variables, read from `.env` in the project root. Se
 | `SPEEDTEST_DOWN_URL` / `_UP_URL`         | Cloudflare speed test    | Download URL with `{bytes}` for the size; upload URL that accepts a POST                               |
 | `SPEEDTEST_LATENCY_TARGET`               | first internet target    | `host:port` timed with a TCP handshake for latency                                                     |
 | `RETAIN_SPEED_DAYS`                      | `400`                    | Speed test retention                                                                                   |
+| `AI_INSIGHTS_ENABLED`                    | `true`                   | AI summary and advice on the Insights page; falls back to the rule-based recommendations               |
+| `OLLAMA_URL` / `OLLAMA_MODEL`            | local / `qwen3:14b`      | Ollama server and model for AI insights (`http://127.0.0.1:11434`)                                     |
+| `OLLAMA_TIMEOUT_SEC`                     | `180`                    | Longest wait for one AI answer before falling back to the rules                                        |
 
 ## Accuracy and limitations
 
@@ -243,7 +256,7 @@ server/src/
   collector/            Polling and recovery, radio and carrier interpretation, mobile data state, internet check, reboots, samplers
   ingest/               Syslog and SNMP trap listeners (shared UDP listener)
   logs/                 Router log and syslog parsing, sliding-window deduplication
-  insights/             Configuration audit, statistics, recommendations, timeline and monitored coverage
+  insights/             Configuration audit, statistics, recommendations, AI advice (Ollama), timeline and monitored coverage
   sms/                  Messages: live SIM inbox, send, mark read, delete, send limits
   radio/                Band selection: validation, trials that revert unless kept
   speed/                Speed tests (measurement, schedule), the band optimiser, diagnosis, placement
@@ -271,16 +284,18 @@ web/src/
 
 ## Troubleshooting
 
-| Symptom                                  | Cause and fix                                                                                                                                                              |
-| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| "Unknown host name" (421)                | You opened Insight by a name it does not know. Add it to `ALLOWED_HOSTS`.                                                                                                  |
-| "Port 4400 is already in use"            | Another program uses the port. Set `PORT` in `.env`.                                                                                                                       |
-| Collector shows **Halted**               | The router rejected the login. Fix `ROUTER_USER`/`ROUTER_PASSWORD`, then press **Retry login**. Insight does not retry on its own, to avoid the router's 3-strike lockout. |
-| Admin page says "Duplicated login"       | Press **Pause** in Insight before using the admin page, and **Resume** afterwards.                                                                                         |
-| Remote syslog stays "Not set up"         | Check the router's log server IP and port. Ports below 1024 need root on macOS, so use `5514`.                                                                             |
-| No **Messages** tab                      | `SMS_ENABLED=false` is set. Remove it (or set `true`) and restart Insight.                                                                                                 |
-| No **Radio control** tab                 | `RADIO_CONTROL_ENABLED=false` is set. Remove it (or set `true`) and restart Insight.                                                                                       |
-| A "gap" warning appears in the event log | Lines rolled out of the router's 100-line buffer between reads. Enable remote syslog or lower `POLL_INTERVAL_SEC`.                                                         |
+| Symptom                                    | Cause and fix                                                                                                                                                              |
+| ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| "Unknown host name" (421)                  | You opened Insight by a name it does not know. Add it to `ALLOWED_HOSTS`.                                                                                                  |
+| "Port 4400 is already in use"              | Another program uses the port. Set `PORT` in `.env`.                                                                                                                       |
+| Collector shows **Halted**                 | The router rejected the login. Fix `ROUTER_USER`/`ROUTER_PASSWORD`, then press **Retry login**. Insight does not retry on its own, to avoid the router's 3-strike lockout. |
+| Admin page says "Duplicated login"         | Press **Pause** in Insight before using the admin page, and **Resume** afterwards.                                                                                         |
+| Remote syslog stays "Not set up"           | Check the router's log server IP and port. Ports below 1024 need root on macOS, so use `5514`.                                                                             |
+| No **Messages** tab                        | `SMS_ENABLED=false` is set. Remove it (or set `true`) and restart Insight.                                                                                                 |
+| No **Radio control** tab                   | `RADIO_CONTROL_ENABLED=false` is set. Remove it (or set `true`) and restart Insight.                                                                                       |
+| No AI switch on Insights                   | Ollama isn't running or isn't at `OLLAMA_URL`: start it (`ollama serve`, or open the Ollama app); the switch appears within a minute.                                      |
+| Insights says "AI analysis unavailable: …" | The model isn't pulled (`ollama pull qwen3:14b`), it took longer than `OLLAMA_TIMEOUT_SEC`, or another analysis kept it busy. The rule-based findings show meanwhile.      |
+| A "gap" warning appears in the event log   | Lines rolled out of the router's 100-line buffer between reads. Enable remote syslog or lower `POLL_INTERVAL_SEC`.                                                         |
 
 ## Compatibility
 
