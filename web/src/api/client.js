@@ -70,7 +70,11 @@ export const api = {
   bands: () => request('/api/bands'),
   devices: () => request('/api/devices'),
   device: (mac, { from } = {}) => request(`/api/devices/${encodeURIComponent(mac)}${qs({ from })}`),
-  insights: ({ from, fresh }) => request(`/api/insights${qs({ from, fresh })}`),
+  // fresh: truthy recomputes (rate-limited on the server); 0/false/absent serves the cache.
+  insights: ({ from, fresh }) => request(`/api/insights${qs({ from, fresh: fresh ? 1 : undefined })}`),
+  // Local AI model's summary and advice; falls back to the rule-based recommendations (source 'rules').
+  // Aborting `signal` tells the server nobody is waiting, so it can stop the model.
+  aiInsights: ({ from, fresh }, { signal } = {}) => request(`/api/insights/ai${qs({ from, fresh: fresh ? 1 : undefined })}`, { signal }),
 
   // SMS on the router's SIM: the only calls that change anything on the router.
   sms: () => request('/api/sms'),

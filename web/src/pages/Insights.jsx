@@ -10,6 +10,7 @@ import { PageHeader, Panel, Stat, ErrorNote, PageLoader } from '../components/ui
 import Segmented from '../components/ui/Segmented.jsx';
 import { StatusIcon } from '../components/ui/Icons.jsx';
 import HourProfile from '../features/insights/HourProfile.jsx';
+import Recommendations from '../features/insights/Recommendations.jsx';
 
 const RANGES = [
   { value: 86400e3, label: '24h' },
@@ -152,22 +153,13 @@ export default function Insights() {
         </Stat>
       </div>
 
-      {d?.recommendations?.length > 0 && (
-        <Panel title="Recommendations" subtitle="Prioritised from current readings and history">
-          <ul className="recs">
-            {d.recommendations.map((rec, i) => (
-              <li key={i} className={`rec rec-${rec.severity}`}>
-                <AuditIcon status={rec.severity} />
-                <div>
-                  <p className="rec-title">{rec.title}</p>
-                  <p className="rec-detail">{rec.detail}</p>
-                  {rec.action && <p className="rec-action">→ {rec.action}</p>}
-                  {rec.tryBand && <TryBand band={rec.tryBand} enabled={!!status?.radioEnabled} />}
-                </div>
-              </li>
-            ))}
-          </ul>
-        </Panel>
+      {d && (
+        <Recommendations
+          rules={d.recommendations}
+          span={span}
+          ai={status?.ai}
+          extra={(rec) => rec.tryBand && <TryBand band={rec.tryBand} enabled={!!status?.radioEnabled} />}
+        />
       )}
 
       <div className="two-col">
